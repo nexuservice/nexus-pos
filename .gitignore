@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+backend/data/
+*.log
+.DS_Store
+# Evidencia cruda de REA puede contener URLs con tokens: revisar antes de subir
+docs/evidencia-rea/
+
+.claude/

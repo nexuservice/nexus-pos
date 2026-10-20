@@ -1,0 +1,19 @@
+{
+  "name": "nexus",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Nexus: punto de venta + tienda online para negocios en Chile",
+  "workspaces": ["core", "backend", "frontend"],
+  "scripts": {
+    "dev:api": "npm run dev -w backend",
+    "dev:web": "npm run dev -w frontend",
+    "test": "npm run test -w core",
+    "typecheck": "tsc -p core --noEmit && tsc -p backend --noEmit && tsc -p frontend --noEmit",
+    "build": "npm run build -w frontend"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "tsx": "^4.19.0"
+  }
+}
