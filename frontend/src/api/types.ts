@@ -1,25 +1,24 @@
-import type {
-  Branch, Cart, CatalogItem, Channel, Customer, DailyReport, InventoryRow, PayMethod, Payment, PaymentEvent,
-  Provider, Sale, TaxDocument,
-} from '@nexus/core';
+import type { Payment, PaymentEvent, PayMethod, PosEngine, Provider, RpcName } from '@nexus/core';
 
-export type SaleWithDoc = Sale & { document: TaxDocument | null };
+type Methods = Extract<RpcName, keyof PosEngine>;
+
+/** Todos los métodos públicos del motor, en versión asíncrona (funcionan igual en modo demo y con servidor). */
+export type Rpc = {
+  [K in Methods]: PosEngine[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : never;
+};
+
+export interface PayOptions {
+  provider?: Provider;
+  /** Solo efectivo: monto entregado por el cliente. */
+  receivedClp?: number;
+}
 
 export interface PosApi {
   readonly mode: 'demo' | 'server';
-  branches(): Promise<Branch[]>;
-  catalog(branchId: string, channel: Channel): Promise<CatalogItem[]>;
-  inventory(branchId: string): Promise<InventoryRow[]>;
-  moveStock(branchId: string, productId: string, from: Channel, to: Channel, quantity: number): Promise<void>;
-  createCart(branchId: string, channel: Channel, customer?: Customer): Promise<Cart>;
-  addItem(cartId: string, code: string, quantity?: number): Promise<Cart>;
-  setQuantity(cartId: string, index: number, quantity: number): Promise<Cart>;
-  clearCart(cartId: string): Promise<Cart>;
-  setCustomer(cartId: string, customer: Customer): Promise<Cart>;
+  rpc: Rpc;
   /** Devuelve el pago pendiente; el resultado llega por watchPayment. */
-  pay(cartId: string, method: PayMethod, provider?: Provider): Promise<Payment>;
+  pay(cartId: string, method: PayMethod, opts?: PayOptions): Promise<Payment>;
   watchPayment(paymentId: string, onEvent: (e: PaymentEvent) => void): () => void;
-  cancelPayment(paymentId: string): Promise<Payment>;
-  sale(saleId: string): Promise<SaleWithDoc>;
-  report(date: string, branchId: string): Promise<DailyReport>;
+  /** Respalda toda la base de datos en un archivo JSON descargable. */
+  backup(): Promise<string>;
 }

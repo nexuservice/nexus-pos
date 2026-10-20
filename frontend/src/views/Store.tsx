@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { formatClp, isValidRut } from '@nexus/core';
 import type { PosApi } from '../api';
-import { useCart, usePayment } from '../hooks';
+import { msg, useCart, usePayment } from '../hooks';
 import { CartPanel, PaymentModal } from '../components';
 
 export function StoreView({ api, branchId }: { api: PosApi; branchId: string | null }) {
   const c = useCart(api, branchId, 'online');
   const pay = usePayment(api);
-  const [form, setForm] = useState({ name: '', email: '', rut: '' });
+  const [form, setForm] = useState({ name: '', email: '', rut: '', promo: '' });
   const [formError, setFormError] = useState<string | null>(null);
 
   const checkout = async (provider: 'mercadopago' | 'transbank') => {
@@ -16,10 +16,10 @@ export function StoreView({ api, branchId }: { api: PosApi; branchId: string | n
     if (form.rut && !isValidRut(form.rut)) return setFormError('El RUT no es válido.');
     setFormError(null);
     try {
-      await api.setCustomer(c.cart.id, { name: form.name.trim(), email: form.email.trim(), rut: form.rut || undefined });
-      await pay.start(c.cart.id, 'credit', provider, c.refreshCatalog);
+      await api.rpc.setCustomer(c.cart.id, { name: form.name.trim(), email: form.email.trim(), rut: form.rut || undefined });
+      await pay.start(c.cart.id, 'credit', { provider }, { onDone: c.refreshCatalog });
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : 'Error inesperado');
+      setFormError(msg(e));
     }
   };
 
@@ -53,11 +53,17 @@ export function StoreView({ api, branchId }: { api: PosApi; branchId: string | n
 
       <CartPanel
         cart={c.cart}
+        orderNo={c.orderNo}
         title="Tu carrito"
         onQty={(i, q) => c.setQty(i, q)}
         onClear={() => c.clear()}
+        onRemovePromo={() => c.removePromo()}
         footer={
           <div className="checkout">
+            <span className="inline">
+              <input placeholder="Código de descuento" value={form.promo} onChange={(e) => setForm({ ...form, promo: e.target.value.toUpperCase() })} aria-label="Código de descuento" />
+              <button className="btn ghost sm" disabled={!form.promo || empty} onClick={() => { c.applyPromo(form.promo); setForm({ ...form, promo: '' }); }}>Aplicar</button>
+            </span>
             <input placeholder="Nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <input placeholder="Correo" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             <input placeholder="RUT (opcional, para la boleta)" value={form.rut} onChange={(e) => setForm({ ...form, rut: e.target.value })} />
@@ -68,12 +74,7 @@ export function StoreView({ api, branchId }: { api: PosApi; branchId: string | n
         }
       />
 
-      <PaymentModal
-        {...pay}
-        onCancel={pay.cancel}
-        onClose={pay.close}
-        onNew={async () => { pay.close(); await c.newCart(); }}
-      />
+      <PaymentModal {...pay} onCancel={pay.cancel} onClose={pay.close} onNew={async () => { pay.close(); await c.newCart(); }} />
     </div>
   );
 }

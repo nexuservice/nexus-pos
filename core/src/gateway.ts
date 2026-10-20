@@ -32,32 +32,35 @@ export class SimulatedGateway implements TerminalGateway {
   constructor(private readonly opts: SimulatedGatewayOptions = {}) {}
 
   async charge(req: ChargeRequest): Promise<ChargeResult> {
-    const delay = req.provider === 'cash' ? 0 : (this.opts.delayMs ?? 1500);
+    const instant = req.provider === 'cash' || req.provider === 'manual';
+    const delay = instant ? 0 : (this.opts.delayMs ?? 1500);
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     if (this.opts.rejectWhen?.(req)) return { approved: false, message: 'Tarjeta rechazada por el emisor' };
+    if (instant) return { approved: true };
     const code = `${req.provider.slice(0, 2).toUpperCase()}${String(++this.n).padStart(6, '0')}`;
     return { approved: true, authCode: code };
   }
 }
 
+export interface PayRequest {
+  cartId: string;
+  method: PayMethod;
+  provider?: Provider;
+  idempotencyKey?: string;
+  /** Solo efectivo: monto entregado por el cliente (para calcular el vuelto). */
+  receivedClp?: number;
+}
+
 /** Inicia el cobro y lo resuelve contra el terminal. No inicia dos cobros con la misma clave. */
-export async function payCart(
-  engine: PosEngine,
-  gateway: TerminalGateway,
-  req: { cartId: string; method: PayMethod; provider?: Provider; idempotencyKey?: string },
-): Promise<Payment> {
-  const { payment, created } = engine.beginPayment(req.cartId, req.method, req.provider, req.idempotencyKey);
+export async function payCart(engine: PosEngine, gateway: TerminalGateway, req: PayRequest): Promise<Payment> {
+  const { payment, created } = engine.beginPayment(req.cartId, req.method, req.provider, req.idempotencyKey, req.receivedClp);
   if (!created) return payment;
   return runCharge(engine, gateway, payment);
 }
 
 /** Variante que devuelve el pago pendiente de inmediato y completa el cobro en segundo plano. */
-export function startPayCart(
-  engine: PosEngine,
-  gateway: TerminalGateway,
-  req: { cartId: string; method: PayMethod; provider?: Provider; idempotencyKey?: string },
-): Payment {
-  const { payment, created } = engine.beginPayment(req.cartId, req.method, req.provider, req.idempotencyKey);
+export function startPayCart(engine: PosEngine, gateway: TerminalGateway, req: PayRequest): Payment {
+  const { payment, created } = engine.beginPayment(req.cartId, req.method, req.provider, req.idempotencyKey, req.receivedClp);
   if (created) void runCharge(engine, gateway, payment);
   return payment;
 }

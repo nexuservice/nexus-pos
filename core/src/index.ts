@@ -5,3 +5,6 @@ export * from './billing';
 export * from './engine';
 export * from './gateway';
 export * from './seed';
+export * from './reports';
+export * from './whatsapp';
+export * from './rpc';

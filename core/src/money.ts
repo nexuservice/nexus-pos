@@ -7,5 +7,6 @@ export function splitIva(totalClp: number): { netClp: number; ivaClp: number } {
 }
 
 export function formatClp(n: number): string {
-  return '$' + Math.round(n).toLocaleString('es-CL');
+  const v = Math.round(n);
+  return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('es-CL');
 }

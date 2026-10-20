@@ -1,7 +1,7 @@
-import { PosEngine, SimulatedGateway, seedState, startPayCart, type EngineState } from '@nexus/core';
-import type { PosApi } from './types';
+import { PosEngine, RPC_METHODS, SimulatedGateway, isReadMethod, seedState, startPayCart, type EngineState } from '@nexus/core';
+import type { PosApi, Rpc } from './types';
 
-const KEY = 'nexus-demo-v1';
+const KEY = 'nexus-demo-v2';
 
 function load(): EngineState {
   try {
@@ -27,32 +27,30 @@ export function createLocalApi(): PosApi {
       /* sin persistencia */
     }
   };
-  const run = async <T,>(fn: () => T, mutates = true): Promise<T> => {
-    const out = fn();
-    if (mutates) save();
-    return out;
-  };
+
+  const rpc = {} as Record<string, (...a: unknown[]) => Promise<unknown>>;
+  for (const name of RPC_METHODS) {
+    rpc[name] = async (...args: unknown[]) => {
+      const out = (engine as unknown as Record<string, (...a: unknown[]) => unknown>)[name]!(...args);
+      if (!isReadMethod(name)) save();
+      return out;
+    };
+  }
 
   return {
     mode: 'demo',
-    branches: () => run(() => engine.branches(), false),
-    catalog: (b, c) => run(() => engine.catalog(b, c), false),
-    inventory: (b) => run(() => engine.inventory(b), false),
-    moveStock: (b, p, f, t, q) => run(() => engine.moveStock(b, p, f, t, q)),
-    createCart: (b, c, cu) => run(() => engine.createCart(b, c, cu)),
-    addItem: (id, code, q = 1) => run(() => engine.cartAdd(id, code, q)),
-    setQuantity: (id, i, q) => run(() => engine.cartSetQuantity(id, i, q)),
-    clearCart: (id) => run(() => engine.cartClear(id)),
-    setCustomer: (id, cu) => run(() => engine.setCustomer(id, cu)),
-    pay: (id, method, provider) => run(() => startPayCart(engine, gateway, { cartId: id, method, provider })),
+    rpc: rpc as unknown as Rpc,
+    pay: async (cartId, method, opts = {}) => {
+      const p = startPayCart(engine, gateway, { cartId, method, ...opts });
+      save();
+      return p;
+    },
     watchPayment: (id, onEvent) =>
       engine.onPaymentEvent(id, (e) => {
         onEvent(e);
         if (e.type === 'approved' || e.type === 'rejected' || e.type === 'cancelled') save();
       }),
-    cancelPayment: (id) => run(() => engine.cancelPayment(id)),
-    sale: (id) => run(() => engine.getSale(id), false),
-    report: (date, b) => run(() => engine.dailyReport(date, b), false),
+    backup: async () => JSON.stringify(engine.snapshot(), null, 2),
   };
 }
 

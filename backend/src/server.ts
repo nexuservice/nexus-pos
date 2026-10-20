@@ -3,8 +3,8 @@ import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  PosEngine, PosError, SimulatedGateway, startPayCart, seedState,
-  type Channel, type EngineState, type PayMethod, type Provider,
+  PosEngine, PosError, SimulatedGateway, startPayCart, seedState, isRpcName, isReadMethod,
+  type EngineState, type PayMethod, type Provider,
 } from '@nexus/core';
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -32,49 +32,43 @@ function persist(): void {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
-const h = (fn: (req: Request, res: Response) => unknown, mutates = false) =>
-  (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const out = fn(req, res);
-      if (mutates) persist();
-      if (!res.headersSent && out !== undefined) res.json(out);
-    } catch (e) {
-      next(e);
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, foliosRemaining: engine.foliosRemaining() });
+});
+
+/** Invoca un método público del motor: POST /api/rpc/:método con { args: [...] }. */
+app.post('/api/rpc/:method', (req, res, next) => {
+  try {
+    const name = String(req.params.method);
+    if (!isRpcName(name)) {
+      res.status(404).json({ code: 'NOT_FOUND', message: 'Método no existe' });
+      return;
     }
-  };
-const p = (req: Request, name: string): string => String(req.params[name]);
-
-app.get('/api/health', h(() => ({ ok: true, foliosRemaining: engine.foliosRemaining() })));
-app.get('/api/branches', h(() => engine.branches()));
-app.get('/api/catalog', h((req) => engine.catalog(String(req.query.branchId ?? 'branch_1'), (req.query.channel as Channel) ?? 'physical')));
-app.get('/api/inventory', h((req) => engine.inventory(String(req.query.branchId ?? 'branch_1'))));
-app.post('/api/inventory/move', h((req) => {
-  const { branchId, productId, from, to, quantity } = req.body;
-  engine.moveStock(branchId, productId, from, to, Number(quantity));
-  return { ok: true };
-}, true));
-
-app.post('/api/carts', h((req) => engine.createCart(req.body.branchId, req.body.channel, req.body.customer), true));
-app.get('/api/carts/:id', h((req) => engine.getCart(p(req, 'id'))));
-app.post('/api/carts/:id/items', h((req) => engine.cartAdd(p(req, 'id'), String(req.body.code), Number(req.body.quantity ?? 1)), true));
-app.patch('/api/carts/:id/items/:index', h((req) => engine.cartSetQuantity(p(req, 'id'), Number(p(req, 'index')), Number(req.body.quantity)), true));
-app.delete('/api/carts/:id/items', h((req) => engine.cartClear(p(req, 'id')), true));
-app.put('/api/carts/:id/customer', h((req) => engine.setCustomer(p(req, 'id'), req.body), true));
+    const args: unknown[] = Array.isArray(req.body?.args) ? req.body.args : [];
+    const out = (engine as unknown as Record<string, (...a: unknown[]) => unknown>)[name]!(...args);
+    if (!isReadMethod(name)) persist();
+    res.json(out ?? null);
+  } catch (e) {
+    next(e);
+  }
+});
 
 /** Responde 202 con el pago pendiente; el avance se sigue por SSE. */
-app.post('/api/carts/:id/pay', h((req, res) => {
-  const body = req.body as { method: PayMethod; provider?: Provider; idempotencyKey?: string };
-  const payment = startPayCart(engine, gateway, { cartId: p(req, 'id'), ...body });
-  persist();
-  res.status(202).json(payment);
-}));
-app.get('/api/payments/:id', h((req) => engine.getPayment(p(req, 'id'))));
-app.post('/api/payments/:id/cancel', h((req) => engine.cancelPayment(p(req, 'id')), true));
+app.post('/api/carts/:id/pay', (req, res, next) => {
+  try {
+    const body = req.body as { method: PayMethod; provider?: Provider; receivedClp?: number };
+    const payment = startPayCart(engine, gateway, { cartId: String(req.params.id), ...body });
+    persist();
+    res.status(202).json(payment);
+  } catch (e) {
+    next(e);
+  }
+});
 
 app.get('/api/payments/:id/events', (req, res) => {
-  const id = p(req, 'id');
+  const id = String(req.params.id);
   try {
     engine.getPayment(id);
   } catch {
@@ -93,11 +87,6 @@ app.get('/api/payments/:id/events', (req, res) => {
   });
   req.on('close', off);
 });
-
-app.get('/api/sales', h((req) => engine.sales(req.query.branchId ? String(req.query.branchId) : undefined)));
-app.get('/api/sales/:id', h((req) => engine.getSale(p(req, 'id'))));
-app.get('/api/reports/daily', h((req) =>
-  engine.dailyReport(String(req.query.date), req.query.branchId ? String(req.query.branchId) : undefined)));
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof PosError) {

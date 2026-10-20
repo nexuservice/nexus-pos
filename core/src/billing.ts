@@ -8,6 +8,9 @@ export interface BoletaInput {
   emisor: Emisor;
   receptor?: Customer;
   lines: CartLine[];
+  /** Descuento global (CLP, IVA incluido). */
+  discountClp?: number;
+  /** Total final, ya con el descuento aplicado. */
   totalClp: number;
 }
 
@@ -18,6 +21,7 @@ export interface ParsedBoleta {
   mntNeto: number;
   iva: number;
   mntTotal: number;
+  discountClp: number;
   items: { name: string; quantity: number; unitPriceClp: number; amountClp: number }[];
 }
 
@@ -42,6 +46,9 @@ export function buildBoletaXml(i: BoletaInput): string {
         `<Detalle><NroLinDet>${n + 1}</NroLinDet><NmbItem>${esc(l.name)}</NmbItem><QtyItem>${l.quantity}</QtyItem><PrcItem>${l.unitPriceClp}</PrcItem><MontoItem>${l.unitPriceClp * l.quantity}</MontoItem></Detalle>`,
     )
     .join('');
+  const descuento = i.discountClp
+    ? `<DscRcgGlobal><NroLinDR>1</NroLinDR><TpoMov>D</TpoMov><TpoValor>$</TpoValor><ValorDR>${i.discountClp}</ValorDR></DscRcgGlobal>`
+    : '';
   return (
     `<?xml version="1.0" encoding="ISO-8859-1"?>` +
     `<DTE version="1.0"><Documento ID="B${i.folio}T39"><Encabezado>` +
@@ -49,7 +56,7 @@ export function buildBoletaXml(i: BoletaInput): string {
     `<Emisor><RUTEmisor>${esc(i.emisor.rut)}</RUTEmisor><RznSocEmisor>${esc(i.emisor.razonSocial)}</RznSocEmisor><GiroEmisor>${esc(i.emisor.giro)}</GiroEmisor><DirOrigen>${esc(i.emisor.direccion)}</DirOrigen><CmnaOrigen>${esc(i.emisor.comuna)}</CmnaOrigen></Emisor>` +
     `<Receptor>${receptor}</Receptor>` +
     `<Totales><MntNeto>${netClp}</MntNeto><IVA>${ivaClp}</IVA><MntTotal>${i.totalClp}</MntTotal></Totales>` +
-    `</Encabezado>${detalle}</Documento></DTE>`
+    `</Encabezado>${detalle}${descuento}</Documento></DTE>`
   );
 }
 
@@ -66,6 +73,7 @@ export function parseBoletaXml(xml: string): ParsedBoleta {
     unitPriceClp: Number(tag(m[1]!, 'PrcItem')),
     amountClp: Number(tag(m[1]!, 'MontoItem')),
   }));
+  const dr = /<DscRcgGlobal>.*?<ValorDR>(\d+)<\/ValorDR>/.exec(xml);
   return {
     tipoDte: Number(tag(xml, 'TipoDTE')),
     folio: Number(tag(xml, 'Folio')),
@@ -73,6 +81,7 @@ export function parseBoletaXml(xml: string): ParsedBoleta {
     mntNeto: Number(tag(xml, 'MntNeto')),
     iva: Number(tag(xml, 'IVA')),
     mntTotal: Number(tag(xml, 'MntTotal')),
+    discountClp: dr ? Number(dr[1]) : 0,
     items,
   };
 }
