@@ -173,6 +173,25 @@ export interface Sale {
   documentId: string | null;
 }
 
+/**
+ * Consumo propio: salida de inventario que no es una venta. Se valoriza al costo, así que no genera
+ * ingreso ni ganancia, y no emite boleta ni usa folio.
+ */
+export interface Consumption {
+  id: string;
+  number: number;
+  branchId: string;
+  shiftId: string | null;
+  cashierName?: string;
+  /** Quién consumió (cliente del pedido, si lo hay). */
+  who?: string;
+  note?: string;
+  lines: CartLine[];
+  /** Σ costo × cantidad: lo que sale del inventario. */
+  costClp: number;
+  createdAt: string;
+}
+
 export interface TaxDocument {
   id: string;
   saleId: string;
@@ -190,7 +209,7 @@ export interface StockMovement {
   productId: string;
   channel: Channel;
   delta: number;
-  reason: 'sale' | 'adjustment' | 'transfer' | 'return';
+  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption';
   refId?: string;
   at: string;
 }
@@ -308,6 +327,8 @@ export interface SalesReport {
   byHour: { hour: number; count: number }[];
   topProducts: { name: string; units: number; revenueClp: number; profitClp: number; marginPct: number }[];
   promotions: { code: string; name: string; uses: number; discountClp: number }[];
+  /** Consumo propio del período, al costo (no entra en ingresos ni utilidad). */
+  consumption: { count: number; units: number; costClp: number };
 }
 
 export interface EngineState {
@@ -326,6 +347,8 @@ export interface EngineState {
   movements: StockMovement[];
   /** Abonos a deudas de convenio. Opcional: las bases guardadas antes de esta función no lo traen. */
   creditPayments?: CreditPayment[];
+  /** Consumos propios. Opcional: las bases guardadas antes de esta función no lo traen. */
+  consumptions?: Consumption[];
   nextFolio: number;
   lastFolio: number;
   saleSeq: number;

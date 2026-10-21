@@ -6,10 +6,10 @@ import { CartPanel, CashModal, CustomerBar, Dropdown, PaymentModal } from '../co
 import { useSettings } from '../settings';
 import { comandaHtml, download, fmtTime, printHtml } from '../format';
 import {
-  HoldModal, OpenShiftCard, PromosModal, ShiftCloseModal, ShiftInfoModal, ShiftSummaryModal, TicketsModal, type HoldData,
+  ConsumptionModal, HoldModal, OpenShiftCard, PromosModal, ShiftCloseModal, ShiftInfoModal, ShiftSummaryModal, TicketsModal, type HoldData,
 } from './PosModals';
 
-type ModalKind = null | 'cash' | 'hold' | 'tickets' | 'promos' | 'shift-info' | 'shift-close';
+type ModalKind = null | 'cash' | 'hold' | 'consumption' | 'tickets' | 'promos' | 'shift-info' | 'shift-close';
 const ICON: Record<PayMethod, string> = { cash: '💵', debit: '💳', credit: '💳', cheque: '💼', transfer: '🏦', convenio: '🤝' };
 
 function Clock() {
@@ -176,6 +176,7 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
         orderNo={c.orderNo}
         title="Pedido"
         compact={prefs.compactCart}
+        headActions={<button className="btn ghost sm" disabled={!hasLines} onClick={() => setModal('consumption')} title="Sacar del inventario al costo, sin venta">🍽️ Consumo</button>}
         onQty={(i, q) => c.setQty(i, q)}
         onClear={() => c.clear()}
         onRemovePromo={() => c.removePromo()}
@@ -205,6 +206,10 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
 
       {modal === 'cash' && c.cart && (
         <CashModal total={c.cart.totalClp} onClose={() => setModal(null)} onConfirm={(r) => { setModal(null); charge('cash', r); }} />
+      )}
+      {modal === 'consumption' && c.cart && (
+        <ConsumptionModal api={api} cart={c.cart} onClose={() => setModal(null)}
+          onDone={async () => { setModal(null); await c.newCart(); await refreshMeta(); }} />
       )}
       {modal === 'hold' && c.cart && (
         <HoldModal

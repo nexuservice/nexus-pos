@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   PAY_METHODS, PAY_METHOD_LABEL, WHATSAPP_TEMPLATE_LABEL, formatClp, whatsappMessage, whatsappUrl,
-  type Cashier, type PayMethod, type Promotion, type Shift, type ShiftInfo, type Ticket, type TicketChannel, type WhatsappTemplate,
+  type Cart, type Cashier, type Consumption, type PayMethod, type Promotion, type Shift, type ShiftInfo, type Ticket, type TicketChannel, type WhatsappTemplate,
 } from '@nexus/core';
 import type { PosApi } from '../api';
 import { Modal } from '../components';
@@ -9,6 +9,52 @@ import { CHANNEL_LABEL, comandaHtml, fmtDate, fmtDateTime, fmtDuration, fmtTime,
 import { msg } from '../hooks';
 
 const Err = ({ text }: { text: string | null }) => (text ? <div className="alert" role="alert">{text}</div> : null);
+
+/** Consumo propio: sale del inventario valorizado al costo; no es una venta ni deja ganancia. */
+export function ConsumptionModal({ api, cart, onDone, onClose }: { api: PosApi; cart: Cart; onDone: () => void; onClose: () => void }) {
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<Consumption | null>(null);
+  const units = cart.lines.reduce((n, l) => n + l.quantity, 0);
+  const cost = cart.lines.reduce((n, l) => n + l.costClp * l.quantity, 0);
+  const noCost = cart.lines.filter((l) => l.costClp === 0);
+
+  const confirm = async () => {
+    try { setBusy(true); setError(null); setDone(await api.rpc.registerConsumption(cart.id, note)); } catch (e) { setError(msg(e)); } finally { setBusy(false); }
+  };
+
+  if (done) {
+    return (
+      <Modal title="✓ Consumo registrado" onClose={onDone}>
+        <div className="receipt"><div className="big"><span>Consumo #{done.number} · al costo</span><strong>{formatClp(done.costClp)}</strong></div></div>
+        <p className="hint">Se descontó del inventario. No se emitió boleta ni se registró ingreso ni ganancia.</p>
+        <button className="btn primary" onClick={onDone}>Nuevo pedido</button>
+      </Modal>
+    );
+  }
+  return (
+    <Modal title="🍽️ Registrar consumo" onClose={onClose}>
+      <p className="hint">No es una venta: los productos salen del inventario al costo, sin boleta, sin cobro y sin ganancia.</p>
+      <ul className="plain">
+        {cart.lines.map((l) => <li key={l.productId}>{l.quantity} × {l.name} · costo {formatClp(l.costClp)} c/u</li>)}
+      </ul>
+      <div className="receipt"><div className="big"><span>{units} unidad(es) al costo</span><strong>{formatClp(cost)}</strong></div></div>
+      {noCost.length > 0 && (
+        <div className="alert" role="alert">Sin costo definido: {noCost.map((l) => l.name).join(', ')}. Se valoriza en $0; define el costo en Administración → Productos.</div>
+      )}
+      <label className="field">Motivo o quién consume (opcional)
+        <input autoFocus placeholder="Ej: consumo del local, merma, degustación" value={note} onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && !busy && confirm()} />
+      </label>
+      <Err text={error} />
+      <div className="row-btns">
+        <button className="btn ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn primary" disabled={busy} onClick={confirm}>Confirmar consumo</button>
+      </div>
+    </Modal>
+  );
+}
 
 /** Pantalla central cuando no hay jornada: elegir cajero, PIN y fondo inicial. */
 export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => void }) {

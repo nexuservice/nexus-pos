@@ -1,4 +1,4 @@
-import type { Kpis, PayMethod, Sale, SalesReport } from './types';
+import type { Consumption, Kpis, PayMethod, Sale, SalesReport } from './types';
 
 const TZ = 'America/Santiago';
 
@@ -46,7 +46,7 @@ function kpis(all: Sale[], folioOf: (documentId: string | null) => number | null
 
 /** Reporte por rango [from, to] (fechas locales, inclusivas) con comparación contra el período anterior. */
 export function buildSalesReport(
-  sales: Sale[], folioOf: (documentId: string | null) => number | null, from: string, to: string,
+  sales: Sale[], folioOf: (documentId: string | null) => number | null, from: string, to: string, consumptions: Consumption[] = [],
 ): SalesReport {
   const inRange = (s: Sale, a: string, b: string) => {
     const d = santiagoDay(s.paidAt);
@@ -113,5 +113,13 @@ export function buildSalesReport(
     byHour: hours,
     topProducts: [...prod.values()].map((v) => ({ ...v, marginPct: margin(v.revenueClp, v.profitClp) })).sort((a, b) => b.units - a.units).slice(0, 10),
     promotions: [...promos.values()].sort((a, b) => b.uses - a.uses),
+    consumption: (() => {
+      const mine = consumptions.filter((c) => { const d = santiagoDay(c.createdAt); return d >= from && d <= to; });
+      return {
+        count: mine.length,
+        units: mine.reduce((n, c) => n + c.lines.reduce((u, l) => u + l.quantity, 0), 0),
+        costClp: mine.reduce((n, c) => n + c.costClp, 0),
+      };
+    })(),
   };
 }

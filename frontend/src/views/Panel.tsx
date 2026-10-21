@@ -69,6 +69,7 @@ export function PanelView({ api, branchId }: { api: PosApi; branchId: string | n
             <Kpi icon="🏷️" label="Descuentos" value={formatClp(k.discountsClp)} sub="total otorgado" />
             <Kpi icon="🚫" label="Anuladas" tone="red" value={String(k.voidedCount)} sub={`${formatClp(k.voidedClp)} anulados`} />
             <Kpi icon="🧮" label="Costo estimado" value={formatClp(k.costClp)} sub="costo de venta" />
+            <Kpi icon="🍽️" label="Consumo propio" value={formatClp(r.consumption.costClp)} sub={`${r.consumption.count} registro(s) · ${r.consumption.units} un. · al costo, sin ganancia`} />
           </div>
 
           <section className="panel"><h2>📈 Tendencia diaria de ventas e ingresos</h2>

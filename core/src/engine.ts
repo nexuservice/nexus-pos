@@ -1,5 +1,5 @@
 import type {
-  AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, CreditPayment, Customer, Emisor, EngineState,
+  AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, Emisor, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
   Shift, ShiftInfo, StockCell, TaxDocument, Ticket, TicketChannel,
 } from './types';
@@ -54,6 +54,7 @@ export class PosEngine {
   constructor(state: EngineState, opts: EngineOptions = {}) {
     this.state = state;
     this.state.creditPayments ??= [];
+    this.state.consumptions ??= [];
     this.now = opts.now ?? (() => new Date());
     this.emisor = opts.emisor ?? DEFAULT_EMISOR;
     this.terminal = opts.terminal ?? 'CAJA1';
@@ -634,6 +635,44 @@ export class PosEngine {
     return clone(payment);
   }
 
+  // ---------- consumo propio ----------
+  /**
+   * Registra el contenido del carrito como consumo propio: descuenta el stock y lo valoriza al costo.
+   * No es una venta: no hay cobro, boleta ni folio, y no suma ingresos ni utilidad.
+   */
+  registerConsumption(cartId: string, note?: string | null): Consumption {
+    const cart = this.openCart(cartId);
+    if (cart.lines.length === 0) throw new PosError('EMPTY_CART', 'El carrito está vacío');
+    if (cart.channel !== 'physical') throw new PosError('NOT_ALLOWED', 'El consumo solo se registra en la caja');
+    const shift = this.openShiftRef();
+    if (!shift) throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para registrar un consumo');
+    const iso = this.now().toISOString();
+    const consumptions = this.state.consumptions!;
+    const id = this.id('cons');
+    const lines: CartLine[] = clone(cart.lines);
+    for (const l of lines) {
+      const cell = this.cell(cart.branchId, l.productId, cart.channel);
+      cell.qty -= l.quantity;
+      cell.reserved -= l.quantity;
+      this.state.movements.push({
+        id: this.id('mov'), branchId: cart.branchId, productId: l.productId, channel: cart.channel,
+        delta: -l.quantity, reason: 'consumption', refId: id, at: iso,
+      });
+    }
+    const consumption: Consumption = {
+      id, number: consumptions.length + 1, branchId: cart.branchId, shiftId: shift.id, cashierName: shift.cashierName,
+      who: cart.customer.name?.trim() || undefined, note: note?.trim() || undefined, lines,
+      costClp: lines.reduce((n, l) => n + l.costClp * l.quantity, 0), createdAt: iso,
+    };
+    consumptions.push(consumption);
+    cart.status = 'closed';
+    return clone(consumption);
+  }
+
+  listConsumptions(limit = 100): Consumption[] {
+    return clone([...(this.state.consumptions ?? [])].reverse().slice(0, limit));
+  }
+
   // ---------- eventos de pago (para SSE) ----------
   emit(paymentId: string, type: PaymentEvent['type'], message?: string, saleId?: string): void {
     const e: PaymentEvent = { paymentId, type, message, saleId, at: this.now().toISOString() };
@@ -781,7 +820,10 @@ export class PosEngine {
 
   // ---------- reportes ----------
   salesReport(from: string, to: string, branchId?: string | null): SalesReport {
-    return buildSalesReport(this.state.sales.filter((s) => !branchId || s.branchId === branchId), (id) => this.state.documents.find((d) => d.id === id)?.folio ?? null, from, to);
+    return buildSalesReport(
+      this.state.sales.filter((s) => !branchId || s.branchId === branchId), (id) => this.state.documents.find((d) => d.id === id)?.folio ?? null, from, to,
+      (this.state.consumptions ?? []).filter((c) => !branchId || c.branchId === branchId),
+    );
   }
 
   // ---------- persistencia ----------

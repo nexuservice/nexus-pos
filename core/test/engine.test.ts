@@ -339,6 +339,64 @@ describe('convenio (venta a crédito)', () => {
   });
 });
 
+describe('consumo propio', () => {
+  const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+  const COLA_COST = Math.round(1990 * 0.65);
+
+  it('descuenta el stock al costo, sin venta, boleta, folio ni ganancia', () => {
+    const e = make();
+    const folio = e.currentFolio();
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, COLA, 2);
+    e.setCustomer(c.id, { name: 'Dueño' });
+    const k = e.registerConsumption(c.id, '  para el local  ');
+    expect(k).toMatchObject({ number: 1, costClp: 2 * COLA_COST, who: 'Dueño', note: 'para el local' });
+    expect(e.available(B, COLA, 'physical')).toBe(38);
+    expect(e.inventory(B).find((r) => r.product.id === COLA)!.physical).toEqual({ qty: 38, reserved: 0 });
+    expect(e.movements(COLA, 1)[0]).toMatchObject({ delta: -2, reason: 'consumption', refId: k.id });
+    expect(e.listSales()).toHaveLength(0);
+    expect(e.currentFolio()).toBe(folio);
+    expect(e.getCart(c.id).status).toBe('closed');
+    expect(e.listConsumptions()).toHaveLength(1);
+  });
+
+  it('exige carrito con productos y jornada abierta, y no se repite sobre el mismo carrito', () => {
+    const e = make();
+    const empty = e.createCart(B, 'physical');
+    expect(() => e.registerConsumption(empty.id)).toThrow(/vacío/);
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, COLA, 1);
+    e.registerConsumption(c.id);
+    expect(() => e.registerConsumption(c.id)).toThrow(PosError);
+    const sin = make({}, {}, false);
+    const c2 = sin.createCart(B, 'physical');
+    sin.cartAdd(c2.id, COLA, 1);
+    expect(() => sin.registerConsumption(c2.id)).toThrow(/jornada abierta/);
+  });
+
+  it('el reporte muestra el consumo al costo y no altera ingresos ni utilidad', async () => {
+    const e = make();
+    const s = e.createCart(B, 'physical'); e.cartAdd(s.id, AGUA, 1);
+    await payCart(e, fast(), { cartId: s.id, method: 'cash', receivedClp: 1000 });
+    const before = e.salesReport(today(), today()).kpis;
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA, 3);
+    e.registerConsumption(c.id);
+    const r = e.salesReport(today(), today());
+    expect(r.kpis).toEqual(before);
+    expect(r.kpis.profitClp).toBe(990 - Math.round(990 * 0.65));
+    expect(r.consumption).toEqual({ count: 1, units: 3, costClp: 3 * COLA_COST });
+  });
+
+  it('una base guardada antes de esta función sigue funcionando', () => {
+    const old = seedState();
+    delete (old as { consumptions?: unknown }).consumptions;
+    const e = new PosEngine(old);
+    e.openShift('cashier_1', '1234', 0);
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA, 1);
+    expect(e.registerConsumption(c.id).number).toBe(1);
+  });
+});
+
 describe('clientes y promociones', () => {
   it('busca clientes por nombre o RUT desde 2 caracteres, sin tildes', () => {
     const e = make();

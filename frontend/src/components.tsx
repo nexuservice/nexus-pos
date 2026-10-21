@@ -221,13 +221,18 @@ export function CartPanel(props: {
   compact?: boolean;
   footer: ReactNode;
   title?: string;
+  /** Botones extra junto a «Limpiar» (p. ej. Consumo en la caja). */
+  headActions?: ReactNode;
 }) {
   const { cart } = props;
   return (
     <aside className={'cart' + (props.compact ? ' compact' : '')}>
       <div className="cart-head">
         <h2>{props.title ?? 'Pedido'} #{props.orderNo}</h2>
-        <button className="btn ghost sm" onClick={props.onClear} disabled={!cart?.lines.length}>Limpiar</button>
+        <div className="cart-head-actions">
+          {props.headActions}
+          <button className="btn ghost sm" onClick={props.onClear} disabled={!cart?.lines.length}>Limpiar</button>
+        </div>
       </div>
       {props.customerBar}
       <div className="cart-lines">
