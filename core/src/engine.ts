@@ -134,8 +134,11 @@ export class PosEngine {
       return clone(existing);
     }
     const n = this.state.products.length + 1;
+    // el contador de ids parte de 0 y los productos de ejemplo ya usan prod_1…prod_N: se salta los ocupados
+    let newId = this.id('prod');
+    while (this.state.products.some((x) => x.id === newId)) newId = this.id('prod');
     const p: Product = {
-      id: this.id('prod'), sku: input.sku?.trim() || `NX-${String(n).padStart(4, '0')}`,
+      id: newId, sku: input.sku?.trim() || `NX-${String(n).padStart(4, '0')}`,
       barcode: barcode || `78${String(Date.now()).slice(-11)}`, name, category: input.category?.trim() || 'General',
       priceClp: input.priceClp, costClp: cost, published: input.published ?? true, active: input.active ?? true,
     };

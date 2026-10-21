@@ -71,6 +71,17 @@ describe('inventario y reservas', () => {
     expect(() => e.cartAdd(c.id, COLA, 1)).toThrow(PosError);
     expect(e.catalog(B, 'physical').some((p) => p.id === COLA)).toBe(false);
   });
+  it('un producto nuevo nace con 0 unidades y no hereda el stock de uno existente', () => {
+    const e = make();
+    const nuevo = e.upsertProduct({ name: 'Producto nuevo', priceClp: 1000 });
+    expect(e.listProducts().filter((p) => p.id === nuevo.id)).toHaveLength(1);
+    expect(e.available(B, nuevo.id, 'physical')).toBe(0);
+    expect(e.available(B, nuevo.id, 'online')).toBe(0);
+    e.adjustStock(B, nuevo.id, 'physical', 7);
+    expect(e.available(B, nuevo.id, 'physical')).toBe(7);
+    expect(e.available(B, COLA, 'physical')).toBe(40);
+    expect(e.available(B, AGUA, 'physical')).toBe(40);
+  });
   it('mueve stock entre canales sin perder unidades', () => {
     const e = make({ physical: 10, online: 0 });
     e.moveStock(B, COLA, 'physical', 'online', 4);
