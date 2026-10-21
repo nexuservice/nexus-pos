@@ -32,7 +32,9 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
         <li><b>Cliente:</b> escribe nombre o RUT (mínimo 2 caracteres). Elige de la lista con el mouse o con ↑ ↓ y Enter. Si no está registrado, queda el nombre como referencia. Los clientes <span className="vip">VIP</span> se marcan.</li>
         <li><b>Efectivo:</b> indica cuánto entrega el cliente y Nexus calcula el vuelto.</li>
         <li><b>Débito / Crédito:</b> el cobro pasa por el terminal (simulado en esta demo, con Transbank por defecto) y muestra su avance.</li>
-        <li><b>Cheque, transferencia y convenio:</b> se registran al instante, sin terminal.</li>
+        <li><b>Cheque y transferencia:</b> se registran al instante, sin terminal.</li>
+        <li><b>Convenio (crédito):</b> solo para clientes registrados con RUT y marcados como «Autorizado para convenio» en Administración → Clientes. Sin un cliente autorizado el botón queda bloqueado. La venta se suma a lo que el cliente debe.</li>
+        <li><b>Deuda del cliente:</b> al buscar un cliente se ve cuánto debe en total. Con «Pagar deuda» (también en Administración → Clientes → «Cobrar deuda») se registra el pago completo o un abono, con la forma de pago que elijas. Requiere jornada abierta y el abono entra al arqueo de esa jornada.</li>
       </ul>
     ),
   },

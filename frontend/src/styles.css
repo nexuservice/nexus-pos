@@ -105,6 +105,13 @@ main > * { flex: 1; }
 .vip { background: #f59e0b; color: #fff; font-size: 11px; font-weight: 800; border-radius: 6px; padding: 1px 6px; }
 .ac { position: absolute; left: 12px; right: 12px; top: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .2); z-index: 15; overflow: hidden; }
 .ac-item { display: flex; gap: 10px; align-items: center; padding: 9px 12px; cursor: pointer; } .ac-item small { color: var(--muted); margin-left: auto; }
+.credit-line { width: 100%; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-left: 26px; font-size: 13px; }
+.credit-pill { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); font-size: 11px; font-weight: 800; border-radius: 6px; padding: 2px 8px; }
+.credit-pill.ok { background: #7c3aed; color: #fff; }
+.debt, .debt-tag { color: var(--bad); }
+.debt-tag { font-size: 12px; font-weight: 700; margin-left: auto; }
+.btn.pay:disabled { opacity: .35; cursor: not-allowed; }
+ul.plain { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
 .ac-item.on, .ac-item:hover { background: color-mix(in srgb, var(--brand) 12%, transparent); }
 
 /* ---------- botones / formularios ---------- */

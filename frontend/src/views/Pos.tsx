@@ -99,6 +99,7 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
   }
   const si = shift.info;
   const hasLines = !!c.cart?.lines.length;
+  const canCredit = !!(c.cart?.customer.clientId && c.cart.customer.creditAuthorized);
 
   return (
     <div className="pos">
@@ -186,13 +187,17 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
               <button className="btn primary" disabled={!hasLines} onClick={() => setPayOpen(!payOpen)}>💵 Cobrar {formatClp(c.cart?.totalClp ?? 0)} {payOpen ? '▼' : '▲'}</button>
             )}
             {(prefs.payAlways || payOpen) && (
-              <div className="pay-grid">
-                {PAY_METHODS.map((m) => (
-                  <button key={m} className={`btn pay ${m}`} disabled={!hasLines} onClick={() => onPayClick(m)}>
-                    <span aria-hidden>{ICON[m]}</span> {PAY_METHOD_LABEL[m]}
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="pay-grid">
+                  {PAY_METHODS.map((m) => (
+                    <button key={m} className={`btn pay ${m}`} disabled={!hasLines || (m === 'convenio' && !canCredit)}
+                      title={m === 'convenio' && !canCredit ? 'Selecciona un cliente autorizado para convenio' : undefined} onClick={() => onPayClick(m)}>
+                      <span aria-hidden>{ICON[m]}</span> {PAY_METHOD_LABEL[m]}
+                    </button>
+                  ))}
+                </div>
+                {hasLines && !canCredit && <small className="hint">Convenio: busca un cliente registrado y autorizado (con nombre y RUT).</small>}
+              </>
             )}
           </>
         }

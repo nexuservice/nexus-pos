@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Cart, Client, Customer } from '@nexus/core';
-import { formatClp } from '@nexus/core';
+import type { Cart, ClientBalance, ClientWithDebt, Customer, PayMethod } from '@nexus/core';
+import { PAY_METHODS, PAY_METHOD_LABEL, formatClp } from '@nexus/core';
 import type { PayPhase, SaleDetail } from './hooks';
 import type { PosApi } from './api/types';
-import { printHtml } from './format';
+import { fmtDateTime, printHtml } from './format';
+import { msg } from './hooks';
 
 export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -39,15 +40,100 @@ export function Dropdown(props: { label: ReactNode; children: (close: () => void
   );
 }
 
-/** Campo "Nombre o RUT del cliente" con autocompletado (desde 2 caracteres) e insignia VIP. */
+/** Deuda de convenio de un cliente: detalle y pago (total o abono). Necesita jornada abierta. */
+export function DebtModal(props: { api: PosApi; client: { id: string; name: string }; onClose: () => void; onPaid?: () => void }) {
+  const [balance, setBalance] = useState<ClientBalance | null>(null);
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState<PayMethod>('cash');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const methods = PAY_METHODS.filter((m) => m !== 'convenio');
+
+  const load = async () => {
+    const b = await props.api.rpc.clientBalance(props.client.id);
+    setBalance(b);
+    setAmount(String(b.debtClp));
+  };
+  useEffect(() => { load().catch((e) => setError(msg(e))); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const value = Number(amount.replace(/\D/g, '')) || 0;
+  const debt = balance?.debtClp ?? 0;
+  const pay = async () => {
+    try {
+      setBusy(true); setError(null);
+      await props.api.rpc.payClientDebt(props.client.id, value, method);
+      await load();
+      props.onPaid?.();
+    } catch (e) { setError(msg(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={`Deuda de ${props.client.name}`} onClose={props.onClose}>
+      <div className="receipt"><div className="big"><span>Debe en total</span><strong>{formatClp(debt)}</strong></div></div>
+      {balance && (
+        <small className="hint">
+          Vendido a convenio {formatClp(balance.creditSalesClp)} · Pagado {formatClp(balance.paidClp)}
+        </small>
+      )}
+      {debt > 0 && (
+        <>
+          <label className="field">Monto a pagar
+            <input inputMode="numeric" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && value > 0 && value <= debt && pay()} />
+          </label>
+          <div className="chips">
+            <button className="chip" onClick={() => setAmount(String(debt))}>Pagar todo</button>
+            {debt >= 2 && <button className="chip" onClick={() => setAmount(String(Math.ceil(debt / 2)))}>Mitad</button>}
+          </div>
+          <label className="field">Forma de pago
+            <select value={method} onChange={(e) => setMethod(e.target.value as PayMethod)}>
+              {methods.map((m) => <option key={m} value={m}>{PAY_METHOD_LABEL[m]}</option>)}
+            </select>
+          </label>
+        </>
+      )}
+      {balance && balance.payments.length > 0 && (
+        <details>
+          <summary>Abonos anteriores ({balance.payments.length})</summary>
+          <ul className="plain">
+            {balance.payments.slice(0, 8).map((p) => <li key={p.id}>{fmtDateTime(p.at)} · {PAY_METHOD_LABEL[p.method]} · {formatClp(p.amountClp)}</li>)}
+          </ul>
+        </details>
+      )}
+      {balance && balance.sales.length > 0 && (
+        <details>
+          <summary>Ventas a convenio ({balance.sales.length})</summary>
+          <ul className="plain">
+            {balance.sales.slice(0, 8).map((s) => <li key={s.id}>#{s.number} · {fmtDateTime(s.paidAt)} · {formatClp(s.totalClp)}</li>)}
+          </ul>
+        </details>
+      )}
+      {error && <div className="alert" role="alert">{error}</div>}
+      <div className="row-btns">
+        <button className="btn ghost" onClick={props.onClose}>Cerrar</button>
+        {debt > 0 && <button className="btn primary" disabled={busy || value <= 0 || value > debt} onClick={pay}>Registrar pago {formatClp(value)}</button>}
+      </div>
+    </Modal>
+  );
+}
+
+/** Campo "Nombre o RUT del cliente" con autocompletado (desde 2 caracteres), insignia VIP y deuda de convenio. */
 export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: (c: Customer) => void }) {
   const { customer } = props;
   const [text, setText] = useState(customer.name ?? '');
-  const [items, setItems] = useState<Client[]>([]);
+  const [items, setItems] = useState<ClientWithDebt[]>([]);
   const [idx, setIdx] = useState(-1);
+  const [debt, setDebt] = useState<number | null>(null);
+  const [debtOpen, setDebtOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => setText(customer.name ?? ''), [customer.name]);
+
+  const loadDebt = async () => {
+    if (!customer.clientId) { setDebt(null); return; }
+    setDebt((await props.api.rpc.clientBalance(customer.clientId)).debtClp);
+  };
+  useEffect(() => { loadDebt().catch(() => setDebt(null)); }, [customer.clientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const search = (q: string) => {
     setText(q);
@@ -58,7 +144,7 @@ export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: 
       setIdx(-1);
     }, 250);
   };
-  const pick = (c: Client) => {
+  const pick = (c: ClientWithDebt) => {
     clearTimeout(timer.current);
     setItems([]);
     setText(c.name);
@@ -104,11 +190,23 @@ export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: 
               <span>{c.name}</span>
               {c.rut && <small>{c.rut}</small>}
               {c.isVip && <span className="vip">VIP</span>}
+              {c.debtClp > 0 && <span className="debt-tag">Debe {formatClp(c.debtClp)}</span>}
             </div>
           ))}
         </div>
       )}
       {customer.rut && <small className="rut">{customer.rut}</small>}
+      {customer.clientId && debt !== null && (
+        <div className="credit-line">
+          <span className={'credit-pill' + (customer.creditAuthorized ? ' ok' : '')}>{customer.creditAuthorized ? 'Convenio autorizado' : 'Sin convenio'}</span>
+          <span>Debe en total: <b className={debt > 0 ? 'debt' : ''}>{formatClp(debt)}</b></span>
+          {debt > 0 && <button className="btn primary sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setDebtOpen(true)}>Pagar deuda</button>}
+        </div>
+      )}
+      {debtOpen && customer.clientId && (
+        <DebtModal api={props.api} client={{ id: customer.clientId, name: customer.name ?? 'cliente' }}
+          onClose={() => { setDebtOpen(false); loadDebt().catch(() => undefined); }} onPaid={() => loadDebt().catch(() => undefined)} />
+      )}
     </div>
   );
 }

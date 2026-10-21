@@ -35,9 +35,9 @@ export const SEED_PRODUCTS: Product[] = [
 ];
 
 export const SEED_CLIENTS: Client[] = [
-  { id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', email: 'maria@ejemplo.cl', phone: '+56911112222', isVip: true },
+  { id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', email: 'maria@ejemplo.cl', phone: '+56911112222', isVip: true, creditAuthorized: true },
   { id: 'cli_seed_2', name: 'Juan Soto', rut: '11111111-1', email: 'juan@ejemplo.cl', phone: '+56933334444', isVip: false },
-  { id: 'cli_seed_3', name: 'Comercial Los Andes SpA', rut: '22222222-2', email: 'compras@losandes.cl', isVip: false },
+  { id: 'cli_seed_3', name: 'Comercial Los Andes SpA', rut: '22222222-2', email: 'compras@losandes.cl', isVip: false, creditAuthorized: true },
 ];
 
 export const SEED_PROMOTIONS: Promotion[] = [
@@ -63,7 +63,7 @@ export function seedState(opts: { physical?: number; online?: number; folioFrom?
     promotions: structuredClone(SEED_PROMOTIONS),
     shifts: [], tickets: [],
     stock,
-    carts: {}, payments: {}, sales: [], documents: [], movements: [],
+    carts: {}, payments: {}, sales: [], documents: [], movements: [], creditPayments: [],
     nextFolio: opts.folioFrom ?? 1,
     lastFolio: opts.folioTo ?? 500,
     saleSeq: 0, ticketSeq: 0, seq: 0,

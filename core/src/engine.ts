@@ -1,5 +1,5 @@
 import type {
-  AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, Customer, Emisor, EngineState,
+  AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, CreditPayment, Customer, Emisor, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
   Shift, ShiftInfo, StockCell, TaxDocument, Ticket, TicketChannel,
 } from './types';
@@ -53,6 +53,7 @@ export class PosEngine {
 
   constructor(state: EngineState, opts: EngineOptions = {}) {
     this.state = state;
+    this.state.creditPayments ??= [];
     this.now = opts.now ?? (() => new Date());
     this.emisor = opts.emisor ?? DEFAULT_EMISOR;
     this.terminal = opts.terminal ?? 'CAJA1';
@@ -187,19 +188,63 @@ export class PosEngine {
   }
 
   // ---------- clientes, cajeros ----------
-  listClients(): Client[] {
-    return clone(this.state.clients);
+  listClients(): ClientWithDebt[] {
+    return clone(this.state.clients.map((c) => ({ ...c, debtClp: this.debtOf(c.id) })));
   }
 
-  /** Búsqueda por nombre o RUT (mínimo 2 caracteres, sin tildes ni puntos). */
-  searchClients(q: string): Client[] {
+  /** Búsqueda por nombre o RUT (mínimo 2 caracteres, sin tildes ni puntos). Incluye lo que cada cliente debe. */
+  searchClients(q: string): ClientWithDebt[] {
     const term = norm(q ?? '').replace(/[.\s]/g, '');
     if (term.length < 2) return [];
     return clone(
       this.state.clients
         .filter((c) => norm(c.name).replace(/\s/g, '').includes(term) || (c.rut ?? '').replace(/[.\-]/g, '').toLowerCase().includes(term.replace(/-/g, '')))
-        .slice(0, 8),
+        .slice(0, 8)
+        .map((c) => ({ ...c, debtClp: this.debtOf(c.id) })),
     );
+  }
+
+  // ---------- convenio (venta a crédito) ----------
+  private creditSales(clientId: string): Sale[] {
+    return this.state.sales.filter((s) => s.method === 'convenio' && s.status === 'completed' && s.customer.clientId === clientId);
+  }
+
+  private debtOf(clientId: string): number {
+    const sold = this.creditSales(clientId).reduce((n, s) => n + s.totalClp, 0);
+    const paid = (this.state.creditPayments ?? []).filter((p) => p.clientId === clientId).reduce((n, p) => n + p.amountClp, 0);
+    return Math.max(0, sold - paid);
+  }
+
+  /** Lo que el cliente debe en total por ventas a convenio, con el detalle de ventas y abonos. */
+  clientBalance(clientId: string): ClientBalance {
+    if (!this.state.clients.some((c) => c.id === clientId)) throw new PosError('NOT_FOUND', 'Cliente no existe');
+    const sales = this.creditSales(clientId);
+    const payments = (this.state.creditPayments ?? []).filter((p) => p.clientId === clientId);
+    return clone({
+      clientId,
+      debtClp: this.debtOf(clientId),
+      creditSalesClp: sales.reduce((n, s) => n + s.totalClp, 0),
+      paidClp: payments.reduce((n, p) => n + p.amountClp, 0),
+      sales: sales.map((s) => ({ id: s.id, number: s.number, totalClp: s.totalClp, paidAt: s.paidAt })).reverse(),
+      payments: [...payments].reverse(),
+    });
+  }
+
+  /** Registra un abono (o el pago completo) a la deuda de convenio. Entra a la jornada abierta con su forma de pago. */
+  payClientDebt(clientId: string, amountClp: number, method: PayMethod): ClientBalance {
+    if (!this.state.clients.some((c) => c.id === clientId)) throw new PosError('NOT_FOUND', 'Cliente no existe');
+    if (!PAY_METHODS.includes(method) || method === 'convenio') throw new PosError('METHOD_NOT_ALLOWED', 'Elige una forma de pago distinta de convenio');
+    const shift = this.openShiftRef();
+    if (!shift) throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para registrar el pago');
+    if (!Number.isInteger(amountClp) || amountClp <= 0) throw new PosError('INVALID_AMOUNT', 'Monto inválido');
+    const debt = this.debtOf(clientId);
+    if (debt === 0) throw new PosError('NOT_ALLOWED', 'El cliente no tiene deuda');
+    if (amountClp > debt) throw new PosError('INVALID_AMOUNT', 'El monto supera la deuda del cliente');
+    const payment: CreditPayment = {
+      id: this.id('abono'), clientId, amountClp, method, shiftId: shift.id, cashierName: shift.cashierName, at: this.now().toISOString(),
+    };
+    this.state.creditPayments!.push(payment);
+    return this.clientBalance(clientId);
   }
 
   upsertClient(input: Partial<Client> & { name: string }): Client {
@@ -212,16 +257,19 @@ export class PosEngine {
     }
     const existing = input.id ? this.state.clients.find((c) => c.id === input.id) : undefined;
     if (rut && this.state.clients.some((c) => c.rut === rut && c.id !== existing?.id)) throw new PosError('INVALID_DATA', 'Ya existe un cliente con ese RUT');
+    const creditAuthorized = !!input.creditAuthorized;
+    if (creditAuthorized && !rut) throw new PosError('INVALID_DATA', 'Para autorizar convenio el cliente necesita RUT');
     if (existing) {
-      Object.assign(existing, { name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip });
+      Object.assign(existing, { name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized });
       return clone(existing);
     }
-    const c: Client = { id: this.id('cli'), name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip };
+    const c: Client = { id: this.id('cli'), name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized };
     this.state.clients.push(c);
     return clone(c);
   }
 
   deleteClient(id: string): void {
+    if (this.debtOf(id) > 0) throw new PosError('NOT_ALLOWED', 'No se puede eliminar un cliente con deuda pendiente');
     this.state.clients = this.state.clients.filter((c) => c.id !== id);
   }
 
@@ -372,7 +420,7 @@ export class PosEngine {
     if (next.clientId) {
       const c = this.state.clients.find((x) => x.id === next.clientId);
       if (!c) throw new PosError('NOT_FOUND', 'Cliente no existe');
-      cart.customer = { clientId: c.id, name: c.name, rut: c.rut, email: c.email, phone: c.phone, isVip: c.isVip };
+      cart.customer = { clientId: c.id, name: c.name, rut: c.rut, email: c.email, phone: c.phone, isVip: c.isVip, creditAuthorized: !!c.creditAuthorized };
       return clone(cart);
     }
     if (next.rut) {
@@ -400,6 +448,8 @@ export class PosEngine {
   private expectedFor(shift: Shift): Partial<Record<PayMethod, number>> {
     const expected: Partial<Record<PayMethod, number>> = {};
     for (const s of this.shiftSales(shift.id)) expected[s.method] = (expected[s.method] ?? 0) + s.totalClp;
+    // Los abonos a convenio cobrados en esta jornada también entran por su forma de pago.
+    for (const p of this.state.creditPayments ?? []) if (p.shiftId === shift.id) expected[p.method] = (expected[p.method] ?? 0) + p.amountClp;
     // El efectivo esperado = fondo inicial + efectivo recibido − vueltos (= total de ventas en efectivo).
     expected.cash = (expected.cash ?? 0) + shift.initialCashClp;
     return expected;
@@ -478,6 +528,12 @@ export class PosEngine {
       if (!isTerminalMethod(method)) throw new PosError('METHOD_NOT_ALLOWED', 'La tienda online solo acepta tarjeta');
     } else if (!this.openShiftRef()) {
       throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para cobrar');
+    }
+    if (method === 'convenio') {
+      // La autorización se valida en el motor con los datos actuales del cliente, no con lo que mande la pantalla.
+      const client = cart.customer.clientId ? this.state.clients.find((c) => c.id === cart.customer.clientId) : undefined;
+      if (!client || !client.name || !client.rut) throw new PosError('CUSTOMER_REQUIRED', 'El convenio requiere un cliente registrado con nombre y RUT');
+      if (!client.creditAuthorized) throw new PosError('METHOD_NOT_ALLOWED', `${client.name} no está autorizado para pagar con convenio`);
     }
     if (this.foliosRemaining() === 0) throw new PosError('NO_FOLIOS', 'No quedan folios de boleta disponibles');
 

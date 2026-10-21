@@ -38,6 +38,34 @@ export interface Client {
   email?: string;
   phone?: string;
   isVip: boolean;
+  /** Autorizado para pagar con convenio (a crédito). Exige RUT. */
+  creditAuthorized?: boolean;
+}
+
+/** Cliente con lo que debe en total por ventas a convenio (ya descontados sus abonos). */
+export interface ClientWithDebt extends Client {
+  debtClp: number;
+}
+
+/** Abono a la deuda de convenio de un cliente. */
+export interface CreditPayment {
+  id: string;
+  clientId: string;
+  amountClp: number;
+  method: PayMethod;
+  shiftId: string | null;
+  cashierName?: string;
+  at: string;
+}
+
+export interface ClientBalance {
+  clientId: string;
+  debtClp: number;
+  /** Total vendido a convenio (sin las ventas anuladas). */
+  creditSalesClp: number;
+  paidClp: number;
+  sales: { id: string; number: number; totalClp: number; paidAt: string }[];
+  payments: CreditPayment[];
 }
 
 /** Datos del cliente asociados a un carrito (registrado o escrito a mano). */
@@ -48,6 +76,7 @@ export interface Customer {
   email?: string;
   phone?: string;
   isVip?: boolean;
+  creditAuthorized?: boolean;
 }
 
 export interface Cashier {
@@ -295,6 +324,8 @@ export interface EngineState {
   sales: Sale[];
   documents: TaxDocument[];
   movements: StockMovement[];
+  /** Abonos a deudas de convenio. Opcional: las bases guardadas antes de esta función no lo traen. */
+  creditPayments?: CreditPayment[];
   nextFolio: number;
   lastFolio: number;
   saleSeq: number;

@@ -174,6 +174,7 @@ describe('pagos', () => {
     for (const m of ['cheque', 'transfer', 'convenio'] as const) {
       const c = e.createCart(B, 'physical');
       e.cartAdd(c.id, AGUA, 1);
+      e.setCustomer(c.id, { clientId: 'cli_seed_1' }); // convenio exige un cliente autorizado
       const p = await payCart(e, fast(), { cartId: c.id, method: m });
       expect(p).toMatchObject({ status: 'approved', provider: 'manual' });
     }
@@ -249,7 +250,7 @@ describe('jornada (turno de caja)', () => {
     now = new Date('2026-10-19T14:30:00Z');
     const a = e.createCart(B, 'physical'); e.cartAdd(a.id, COLA, 1);
     await payCart(e, g, { cartId: a.id, method: 'cash', receivedClp: 2000 });
-    const b = e.createCart(B, 'physical'); e.cartAdd(b.id, AGUA, 1);
+    const b = e.createCart(B, 'physical'); e.cartAdd(b.id, AGUA, 1); e.setCustomer(b.id, { clientId: 'cli_seed_1' });
     await payCart(e, g, { cartId: b.id, method: 'convenio' });
     const info = e.shiftInfo()!;
     expect(info).toMatchObject({ salesCount: 2, salesTotalClp: 2980 });
@@ -259,6 +260,82 @@ describe('jornada (turno de caja)', () => {
     expect(closed).toMatchObject({ status: 'closed', notes: 'falta un billete', salesCount: 2 });
     expect(closed.difference).toEqual({ cash: -90, convenio: 0 });
     expect(e.currentShift()).toBeNull();
+  });
+});
+
+describe('convenio (venta a crédito)', () => {
+  const MARIA = 'cli_seed_1'; // autorizada
+  const JUAN = 'cli_seed_2'; // sin convenio
+  const sellOnCredit = async (e: PosEngine, clientId: string | undefined, productId = COLA) => {
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, productId, 1);
+    if (clientId) e.setCustomer(c.id, { clientId });
+    return payCart(e, fast(), { cartId: c.id, method: 'convenio' });
+  };
+
+  it('no permite convenio sin cliente, con cliente escrito a mano o no autorizado', async () => {
+    const e = make();
+    await expect(sellOnCredit(e, undefined)).rejects.toThrow(/cliente registrado/);
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, COLA, 1);
+    e.setCustomer(c.id, { name: 'Pedro', rut: '11.111.111-1' });
+    expect(() => e.beginPayment(c.id, 'convenio')).toThrow(/cliente registrado/);
+    await expect(sellOnCredit(e, JUAN)).rejects.toThrow(/no está autorizado/);
+    expect(e.listSales()).toHaveLength(0);
+  });
+
+  it('exige RUT para autorizar convenio', () => {
+    const e = make();
+    expect(() => e.upsertClient({ name: 'Sin RUT', creditAuthorized: true })).toThrow(/RUT/);
+    expect(e.upsertClient({ name: 'Con RUT', rut: '33.333.333-3', creditAuthorized: true }).creditAuthorized).toBe(true);
+  });
+
+  it('acumula la deuda y la muestra al buscar al cliente', async () => {
+    const e = make();
+    await sellOnCredit(e, MARIA, COLA);
+    await sellOnCredit(e, MARIA, AGUA);
+    expect(e.clientBalance(MARIA)).toMatchObject({ debtClp: 1990 + 990, creditSalesClp: 2980, paidClp: 0 });
+    expect(e.searchClients('maria')[0]).toMatchObject({ id: MARIA, debtClp: 2980 });
+    expect(e.searchClients('juan')[0]).toMatchObject({ id: JUAN, debtClp: 0 });
+  });
+
+  it('permite abonar o pagar todo, y rechaza pasarse de la deuda', async () => {
+    const e = make();
+    await sellOnCredit(e, MARIA, COLA);
+    expect(e.payClientDebt(MARIA, 500, 'cash').debtClp).toBe(1490);
+    expect(() => e.payClientDebt(MARIA, 2000, 'cash')).toThrow(/supera la deuda/);
+    expect(() => e.payClientDebt(MARIA, 100, 'convenio')).toThrow(PosError);
+    expect(() => e.payClientDebt(MARIA, 0, 'cash')).toThrow(PosError);
+    expect(e.payClientDebt(MARIA, 1490, 'transfer')).toMatchObject({ debtClp: 0, paidClp: 1990 });
+    expect(() => e.payClientDebt(MARIA, 100, 'cash')).toThrow(/no tiene deuda/);
+  });
+
+  it('el abono necesita jornada abierta y entra al arqueo por su forma de pago', async () => {
+    const e = make();
+    await sellOnCredit(e, MARIA, COLA);
+    e.payClientDebt(MARIA, 1000, 'cash');
+    e.payClientDebt(MARIA, 500, 'transfer');
+    expect(e.shiftInfo()!.expected).toEqual({ cash: 10_000 + 1000, convenio: 1990, transfer: 500 });
+    e.closeShift({ cash: 11_000, convenio: 1990, transfer: 500 });
+    expect(() => e.payClientDebt(MARIA, 100, 'cash')).toThrow(/jornada abierta/);
+  });
+
+  it('anular una venta a convenio baja la deuda, y no se borra a un cliente que debe', async () => {
+    const e = make();
+    const p = await sellOnCredit(e, MARIA, COLA);
+    expect(() => e.deleteClient(MARIA)).toThrow(/deuda pendiente/);
+    e.voidSale(p.saleId!);
+    expect(e.clientBalance(MARIA).debtClp).toBe(0);
+    e.deleteClient(MARIA);
+  });
+
+  it('una base guardada antes de esta función sigue funcionando', async () => {
+    const old = seedState();
+    delete (old as { creditPayments?: unknown }).creditPayments;
+    const e = new PosEngine(old);
+    e.openShift('cashier_1', '1234', 0);
+    await sellOnCredit(e, MARIA);
+    expect(e.payClientDebt(MARIA, 1990, 'cash').debtClp).toBe(0);
   });
 });
 

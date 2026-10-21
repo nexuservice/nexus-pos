@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   PAY_METHODS, PAY_METHOD_LABEL, formatClp,
-  type Cashier, type Client, type InventoryRow, type Product, type Promotion, type Shift,
+  type Cashier, type ClientWithDebt, type InventoryRow, type Product, type Promotion, type Shift,
 } from '@nexus/core';
 import type { PosApi } from '../api';
+import { DebtModal } from '../components';
 import { fmtDateTime } from '../format';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
@@ -92,9 +93,10 @@ function Products({ api, branchId }: { api: PosApi; branchId: string | null }) {
 
 function Clients({ api }: { api: PosApi }) {
   const [rows, reload] = useList(() => api.rpc.listClients());
-  const blank = { name: '', rut: '', email: '', phone: '', isVip: false };
+  const blank = { name: '', rut: '', email: '', phone: '', isVip: false, creditAuthorized: false };
   const [f, setF] = useState<typeof blank & { id?: string }>(blank);
   const [open, setOpen] = useState(false);
+  const [debtOf, setDebtOf] = useState<ClientWithDebt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
     try { setError(null); await api.rpc.upsertClient(f); setOpen(false); setF(blank); await reload(); } catch (e) { setError(msg(e)); }
@@ -111,18 +113,23 @@ function Clients({ api }: { api: PosApi }) {
             <label className="field">Correo<input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></label>
             <label className="field">Teléfono<input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
             <label className="check"><input type="checkbox" checked={f.isVip} onChange={(e) => setF({ ...f, isVip: e.target.checked })} /> Cliente VIP</label>
+            <label className="check"><input type="checkbox" checked={f.creditAuthorized} onChange={(e) => setF({ ...f, creditAuthorized: e.target.checked })} /> Autorizado para convenio (crédito) — requiere RUT</label>
           </div>
           <Err text={error} />
           <div className="row-btns"><button className="btn primary" onClick={save}>Guardar</button><button className="btn ghost" onClick={() => setOpen(false)}>Cancelar</button></div>
         </div>
       )}
       <div className="table-wrap"><table>
-        <thead><tr><th>Nombre</th><th>RUT</th><th>Correo</th><th>Teléfono</th><th /></tr></thead>
-        <tbody>{rows.map((c: Client) => (
+        <thead><tr><th>Nombre</th><th>RUT</th><th>Correo</th><th>Teléfono</th><th>Convenio</th><th>Debe</th><th /></tr></thead>
+        <tbody>{rows.map((c: ClientWithDebt) => (
           <tr key={c.id}><td>{c.name} {c.isVip && <span className="vip">VIP</span>}</td><td>{c.rut}</td><td>{c.email}</td><td>{c.phone}</td>
-            <td><button className="btn ghost sm" onClick={() => { setF({ id: c.id, name: c.name, rut: c.rut ?? '', email: c.email ?? '', phone: c.phone ?? '', isVip: c.isVip }); setOpen(true); }}>Editar</button>{' '}
-              <button className="btn ghost sm" onClick={async () => { if (confirm(`¿Eliminar a ${c.name}?`)) { await api.rpc.deleteClient(c.id); await reload(); } }}>Eliminar</button></td></tr>))}</tbody>
+            <td><span className={'pill ' + (c.creditAuthorized ? 'ok' : 'bad')}>{c.creditAuthorized ? 'autorizado' : 'no'}</span></td>
+            <td className={c.debtClp > 0 ? 'debt' : ''}>{formatClp(c.debtClp)}</td>
+            <td><button className="btn ghost sm" onClick={() => { setError(null); setF({ id: c.id, name: c.name, rut: c.rut ?? '', email: c.email ?? '', phone: c.phone ?? '', isVip: c.isVip, creditAuthorized: !!c.creditAuthorized }); setOpen(true); }}>Editar</button>{' '}
+              {c.debtClp > 0 && <><button className="btn primary sm" onClick={() => setDebtOf(c)}>Cobrar deuda</button>{' '}</>}
+              <button className="btn ghost sm" onClick={async () => { if (confirm(`¿Eliminar a ${c.name}?`)) { try { await api.rpc.deleteClient(c.id); await reload(); } catch (e) { alert(msg(e)); } } }}>Eliminar</button></td></tr>))}</tbody>
       </table></div>
+      {debtOf && <DebtModal api={api} client={debtOf} onClose={() => { setDebtOf(null); reload(); }} />}
     </>
   );
 }
