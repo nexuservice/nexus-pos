@@ -220,6 +220,35 @@ export interface StockMovement {
   at: string;
 }
 
+/** Una línea de la tarjeta de existencia: lo que entró o salió y el saldo que quedó. */
+export interface StockCardRow {
+  id: string;
+  at: string;
+  channel: Channel;
+  type: StockMovement['reason'];
+  /** Qué originó el movimiento (Venta #12, Consumo #3, Ajuste, Traspaso a Online…). */
+  detail: string;
+  entry: number;
+  exit: number;
+  /** Existencia después de este movimiento. */
+  balance: number;
+}
+
+/** Tarjeta de existencia (kardex) de un producto. Las filas van de la más nueva a la más antigua. */
+export interface StockCard {
+  product: Product;
+  channel: Channel | 'all';
+  openingQty: number;
+  closingQty: number;
+  entries: number;
+  exits: number;
+  /** Cantidad reservada en carritos y pedidos abiertos (dentro de la existencia actual). */
+  reservedQty: number;
+  /** Existencia actual del producto en el canal consultado. */
+  currentQty: number;
+  rows: StockCardRow[];
+}
+
 export interface StockCell {
   qty: number;
   reserved: number;

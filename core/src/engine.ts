@@ -1,7 +1,7 @@
 import type {
   AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, Emisor, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
-  Shift, ShiftInfo, StockCell, TaxDocument, Ticket, TicketChannel,
+  Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
 } from './types';
 import { PAY_METHODS, isTerminalMethod } from './types';
 import { splitIva } from './money';
@@ -186,6 +186,55 @@ export class PosEngine {
 
   movements(productId?: string, limit = 100): EngineState['movements'] {
     return clone(this.state.movements.filter((m) => !productId || m.productId === productId).slice(-limit).reverse());
+  }
+
+  /**
+   * Tarjeta de existencia (kardex) de un producto: cada entrada y salida con su origen y el saldo resultante.
+   * `channel = 'all'` suma caja y online (los traspasos entre canales no cambian el total y no se muestran).
+   * El saldo inicial se deduce de la existencia actual menos los movimientos, porque el stock de partida no es un movimiento.
+   */
+  stockCard(branchId: string, productId: string, channel: Channel | 'all' = 'all', from?: string | null, to?: string | null): StockCard {
+    const p = this.product(productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    const channels: Channel[] = channel === 'all' ? ['physical', 'online'] : [channel];
+    const cells = channels.map((c) => this.state.stock[this.key(branchId, p.id, c)] ?? { qty: 0, reserved: 0 });
+    const currentQty = cells.reduce((n, c) => n + c.qty, 0);
+    const moves = this.state.movements.filter((m) =>
+      m.branchId === branchId && m.productId === p.id && channels.includes(m.channel) && !(channel === 'all' && m.reason === 'transfer'));
+
+    const label: Record<Channel, string> = { physical: 'Caja', online: 'Online' };
+    const detailOf = (m: StockMovement): string => {
+      const sale = this.state.sales.find((s) => s.id === m.refId);
+      const cons = (this.state.consumptions ?? []).find((c) => c.id === m.refId);
+      switch (m.reason) {
+        case 'sale': return sale ? `Venta${sale.channel === 'online' ? ' online' : ''} #${sale.number}` : 'Venta';
+        case 'consumption': return cons ? `Consumo #${cons.number}${cons.note ? ` · ${cons.note}` : ''}` : 'Consumo';
+        case 'return': return sale ? `Anulación de venta #${sale.number}` : cons ? `Anulación de consumo #${cons.number}` : 'Devolución';
+        case 'transfer': return m.delta < 0 ? `Traspaso a ${label[m.channel === 'physical' ? 'online' : 'physical']}` : `Traspaso desde ${label[m.channel === 'physical' ? 'online' : 'physical']}`;
+        default: return 'Ajuste de inventario';
+      }
+    };
+
+    let balance = currentQty - moves.reduce((n, m) => n + m.delta, 0);
+    const all: StockCardRow[] = moves.map((m) => {
+      balance += m.delta;
+      return {
+        id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m),
+        entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance,
+      };
+    });
+
+    const day = (iso: string) => santiagoDay(iso);
+    const before = all.filter((r) => from && day(r.at) < from);
+    const inRange = all.filter((r) => (!from || day(r.at) >= from) && (!to || day(r.at) <= to));
+    const startOfAll = currentQty - moves.reduce((n, m) => n + m.delta, 0);
+    const openingQty = before.length ? before[before.length - 1]!.balance : startOfAll;
+    const closingQty = inRange.length ? inRange[inRange.length - 1]!.balance : openingQty;
+    return clone({
+      product: p, channel, openingQty, closingQty,
+      entries: inRange.reduce((n, r) => n + r.entry, 0), exits: inRange.reduce((n, r) => n + r.exit, 0),
+      reservedQty: cells.reduce((n, c) => n + c.reserved, 0), currentQty, rows: [...inRange].reverse(),
+    });
   }
 
   // ---------- clientes, cajeros ----------

@@ -353,6 +353,57 @@ describe('convenio (venta a crédito)', () => {
   });
 });
 
+describe('tarjeta de existencia', () => {
+  it('lista entradas y salidas con su origen y el saldo después de cada movimiento', async () => {
+    const e = make({ physical: 10, online: 4 });
+    const s = e.createCart(B, 'physical'); e.cartAdd(s.id, COLA, 3);
+    const sale = await payCart(e, fast(), { cartId: s.id, method: 'cash', receivedClp: 6000 });
+    const k = e.createCart(B, 'physical'); e.cartAdd(k.id, COLA, 2);
+    const cons = e.registerConsumption(k.id, 'degustación');
+    e.adjustStock(B, COLA, 'physical', 5);
+    e.moveStock(B, COLA, 'physical', 'online', 1);
+
+    const card = e.stockCard(B, COLA, 'physical');
+    expect(card.openingQty).toBe(10);
+    expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
+      ['Traspaso a Online', 0, 1, 9],
+      ['Ajuste de inventario', 5, 0, 10],
+      ['Consumo #1 · degustación', 0, 2, 5],
+      [`Venta #${e.getSale(sale.saleId!).number}`, 0, 3, 7],
+    ]);
+    expect(card).toMatchObject({ closingQty: 9, currentQty: 9, entries: 5, exits: 6 });
+    expect(e.available(B, COLA, 'physical')).toBe(card.closingQty);
+    expect(cons.id).toBeTruthy();
+  });
+
+  it('en la vista total los traspasos no aparecen y el saldo suma ambos canales', () => {
+    const e = make({ physical: 10, online: 4 });
+    e.moveStock(B, COLA, 'physical', 'online', 3);
+    e.adjustStock(B, COLA, 'online', -1);
+    const all = e.stockCard(B, COLA);
+    expect(all).toMatchObject({ openingQty: 14, closingQty: 13, currentQty: 13 });
+    expect(all.rows.map((r) => r.detail)).toEqual(['Ajuste de inventario']);
+    const online = e.stockCard(B, COLA, 'online');
+    expect(online.rows.map((r) => [r.detail, r.balance])).toEqual([['Ajuste de inventario', 6], ['Traspaso desde Caja', 7]]);
+  });
+
+  it('muestra las anulaciones y filtra por fecha con su saldo inicial', async () => {
+    const e = make();
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, AGUA, 2);
+    const p = await payCart(e, fast(), { cartId: c.id, method: 'cash', receivedClp: 2000 });
+    const num = e.getSale(p.saleId!).number;
+    e.voidSale(p.saleId!);
+    const card = e.stockCard(B, AGUA, 'physical');
+    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de venta #${num}`, 40], [`Venta #${num}`, 38]]);
+    const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+    expect(e.stockCard(B, AGUA, 'physical', hoy, hoy).rows).toHaveLength(2);
+    const futuro = e.stockCard(B, AGUA, 'physical', '2999-01-01');
+    expect(futuro).toMatchObject({ openingQty: 40, closingQty: 40, rows: [] });
+    expect(e.stockCard(B, AGUA, 'physical', undefined, '2000-01-01')).toMatchObject({ openingQty: 40, closingQty: 40, rows: [] });
+    expect(() => e.stockCard(B, 'nope')).toThrow(PosError);
+  });
+});
+
 describe('consumo propio', () => {
   const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
   const COLA_COST = Math.round(1990 * 0.65);

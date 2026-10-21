@@ -3,7 +3,7 @@
  * Los de lectura no persisten el estado; los de escritura sí.
  */
 export const READ_METHODS = [
-  'branches', 'catalog', 'listProducts', 'inventory', 'movements', 'listClients', 'searchClients', 'clientBalance', 'listConsumptions', 'listCashiers',
+  'branches', 'catalog', 'listProducts', 'inventory', 'movements', 'stockCard', 'listClients', 'searchClients', 'clientBalance', 'listConsumptions', 'listCashiers',
   'listPromotions', 'activePromotions', 'getCart', 'nextOrderNumber', 'currentShift', 'shiftInfo', 'listShifts',
   'getPayment', 'foliosRemaining', 'currentFolio', 'getSale', 'listSales', 'listTickets', 'salesReport', 'snapshot',
 ] as const;

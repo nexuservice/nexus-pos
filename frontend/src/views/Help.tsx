@@ -7,7 +7,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
         <ul>
           <li><b>Caja</b>: vender en el local. Requiere una jornada abierta.</li>
           <li><b>Tienda online</b>: catálogo y carrito para tus clientes. No requiere jornada.</li>
-          <li><b>Administración</b>: productos, clientes, cajeros, promociones, inventario y jornadas.</li>
+          <li><b>Administración</b>: productos, clientes, cajeros, promociones, inventario y jornadas. En <i>Inventario</i>, toca el nombre de un producto para ver su <b>tarjeta de existencia</b>: cada entrada y salida (ventas, consumos, ajustes, traspasos y anulaciones) con el saldo después de cada movimiento. Se puede ver por Total, Caja u Online, filtrar por fechas e imprimir.</li>
           <li><b>Panel</b> e <b>Historial</b>: analítica y revisión de ventas.</li>
         </ul>
       </>

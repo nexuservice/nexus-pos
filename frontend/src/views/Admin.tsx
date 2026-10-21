@@ -5,6 +5,7 @@ import {
 } from '@nexus/core';
 import type { PosApi } from '../api';
 import { DebtModal } from '../components';
+import { StockCardModal } from './StockCard';
 import { fmtDateTime } from '../format';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
@@ -186,19 +187,20 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [adj, setAdj] = useState<Record<string, string>>({});
+  const [cardFor, setCardFor] = useState<Product | null>(null);
   const load = useCallback(async () => { if (branchId) setRows(await api.rpc.inventory(branchId)); }, [api, branchId]);
   useEffect(() => { load().catch(() => undefined); }, [load]);
   const run = async (fn: () => Promise<unknown>) => { try { setError(null); await fn(); await load(); } catch (e) { setError(msg(e)); } };
   return (
     <>
       <div className="page-head"><h2>Inventario por canal</h2></div>
-      <p className="hint">Mueve unidades entre caja y tienda online o ajusta el stock de la caja (positivo suma, negativo resta). «res.» = reservado en carritos y pedidos abiertos.</p>
+      <p className="hint">Mueve unidades entre caja y tienda online o ajusta el stock de la caja (positivo suma, negativo resta). «res.» = reservado en carritos y pedidos abiertos. Toca un producto para ver su tarjeta de existencia.</p>
       <Err text={error} />
       <div className="table-wrap"><table>
         <thead><tr><th>Producto</th><th>Caja</th><th>Online</th><th>Mover 5</th><th>Ajustar caja</th></tr></thead>
         <tbody>{rows.map(({ product, physical, online }) => (
           <tr key={product.id}>
-            <td>{product.name}{!product.published && <span className="tag">solo local</span>}</td>
+            <td><button className="link-btn" title="Ver tarjeta de existencia" onClick={() => setCardFor(product)}>{product.name}</button>{!product.published && <span className="tag">solo local</span>}</td>
             <td>{physical.qty}{physical.reserved > 0 && <small> ({physical.reserved} res.)</small>}</td>
             <td>{online.qty}{online.reserved > 0 && <small> ({online.reserved} res.)</small>}</td>
             <td>
@@ -209,6 +211,7 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
               <button className="btn ghost sm" disabled={!Number(adj[product.id])} onClick={() => run(async () => { await api.rpc.adjustStock(branchId!, product.id, 'physical', Number(adj[product.id])); setAdj({ ...adj, [product.id]: '' }); })}>OK</button></span></td>
           </tr>))}</tbody>
       </table></div>
+      {cardFor && branchId && <StockCardModal api={api} branchId={branchId} product={cardFor} onClose={() => setCardFor(null)} />}
     </>
   );
 }
