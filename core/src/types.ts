@@ -189,6 +189,9 @@ export interface Consumption {
   lines: CartLine[];
   /** Σ costo × cantidad: lo que sale del inventario. */
   costClp: number;
+  status: 'active' | 'voided';
+  voidedAt?: string;
+  voidReason?: string;
   createdAt: string;
 }
 

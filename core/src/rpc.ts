@@ -12,7 +12,7 @@ export const WRITE_METHODS = [
   'upsertProduct', 'adjustStock', 'moveStock', 'upsertClient', 'deleteClient', 'upsertCashier', 'upsertPromotion',
   'deletePromotion', 'applyPromo', 'removePromo', 'createCart', 'cartAdd', 'cartSetQuantity', 'cartRemove', 'cartClear',
   'setCustomer', 'openShift', 'closeShift', 'cancelPayment', 'voidSale', 'holdCart', 'createPaidTicket', 'resumeTicket',
-  'completeTicket', 'cancelTicket', 'payClientDebt', 'registerConsumption',
+  'completeTicket', 'cancelTicket', 'payClientDebt', 'registerConsumption', 'voidConsumption',
 ] as const;
 
 export const RPC_METHODS = [...READ_METHODS, ...WRITE_METHODS] as const;

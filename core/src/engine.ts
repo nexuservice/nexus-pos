@@ -662,15 +662,43 @@ export class PosEngine {
     const consumption: Consumption = {
       id, number: consumptions.length + 1, branchId: cart.branchId, shiftId: shift.id, cashierName: shift.cashierName,
       who: cart.customer.name?.trim() || undefined, note: note?.trim() || undefined, lines,
-      costClp: lines.reduce((n, l) => n + l.costClp * l.quantity, 0), createdAt: iso,
+      costClp: lines.reduce((n, l) => n + l.costClp * l.quantity, 0), status: 'active', createdAt: iso,
     };
     consumptions.push(consumption);
     cart.status = 'closed';
     return clone(consumption);
   }
 
-  listConsumptions(limit = 100): Consumption[] {
-    return clone([...(this.state.consumptions ?? [])].reverse().slice(0, limit));
+  listConsumptions(filter: { from?: string; to?: string; branchId?: string; limit?: number } = {}): Consumption[] {
+    const f = filter ?? {};
+    return clone(
+      [...(this.state.consumptions ?? [])]
+        .filter((c) =>
+          (!f.branchId || c.branchId === f.branchId) &&
+          (!f.from || santiagoDay(c.createdAt) >= f.from) &&
+          (!f.to || santiagoDay(c.createdAt) <= f.to))
+        .reverse()
+        .slice(0, f.limit ?? 100),
+    );
+  }
+
+  /** Anula un consumo y devuelve las unidades al inventario. Deja de contar en el reporte. */
+  voidConsumption(consumptionId: string, reason?: string | null): Consumption {
+    const c = (this.state.consumptions ?? []).find((x) => x.id === consumptionId);
+    if (!c) throw new PosError('NOT_FOUND', 'Consumo no existe');
+    if (c.status === 'voided') throw new PosError('NOT_ALLOWED', 'El consumo ya está anulado');
+    const iso = this.now().toISOString();
+    for (const l of c.lines) {
+      this.cell(c.branchId, l.productId, 'physical').qty += l.quantity;
+      this.state.movements.push({
+        id: this.id('mov'), branchId: c.branchId, productId: l.productId, channel: 'physical',
+        delta: l.quantity, reason: 'return', refId: c.id, at: iso,
+      });
+    }
+    c.status = 'voided';
+    c.voidedAt = iso;
+    c.voidReason = reason?.trim() || undefined;
+    return clone(c);
   }
 
   // ---------- eventos de pago (para SSE) ----------

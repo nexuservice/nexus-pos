@@ -114,7 +114,7 @@ export function buildSalesReport(
     topProducts: [...prod.values()].map((v) => ({ ...v, marginPct: margin(v.revenueClp, v.profitClp) })).sort((a, b) => b.units - a.units).slice(0, 10),
     promotions: [...promos.values()].sort((a, b) => b.uses - a.uses),
     consumption: (() => {
-      const mine = consumptions.filter((c) => { const d = santiagoDay(c.createdAt); return d >= from && d <= to; });
+      const mine = consumptions.filter((c) => c.status !== 'voided' && santiagoDay(c.createdAt) >= from && santiagoDay(c.createdAt) <= to);
       return {
         count: mine.length,
         units: mine.reduce((n, c) => n + c.lines.reduce((u, l) => u + l.quantity, 0), 0),

@@ -387,6 +387,29 @@ describe('consumo propio', () => {
     expect(r.consumption).toEqual({ count: 1, units: 3, costClp: 3 * COLA_COST });
   });
 
+  it('anular un consumo devuelve el stock y deja de contar en el reporte', () => {
+    const e = make();
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA, 3);
+    const k = e.registerConsumption(c.id);
+    expect(e.available(B, COLA, 'physical')).toBe(37);
+    const voided = e.voidConsumption(k.id, '  me equivoqué ');
+    expect(voided).toMatchObject({ status: 'voided', voidReason: 'me equivoqué' });
+    expect(e.available(B, COLA, 'physical')).toBe(40);
+    expect(e.movements(COLA, 1)[0]).toMatchObject({ delta: 3, reason: 'return', refId: k.id });
+    expect(e.salesReport(today(), today()).consumption).toEqual({ count: 0, units: 0, costClp: 0 });
+    expect(e.listConsumptions()[0]!.status).toBe('voided');
+    expect(() => e.voidConsumption(k.id)).toThrow(/ya está anulado/);
+    expect(() => e.voidConsumption('nope')).toThrow(PosError);
+  });
+
+  it('filtra la lista de consumos por fecha', () => {
+    const e = make();
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA, 1);
+    e.registerConsumption(c.id);
+    expect(e.listConsumptions({ from: today(), to: today() })).toHaveLength(1);
+    expect(e.listConsumptions({ to: '2000-01-01' })).toHaveLength(0);
+  });
+
   it('una base guardada antes de esta función sigue funcionando', () => {
     const old = seedState();
     delete (old as { consumptions?: unknown }).consumptions;
