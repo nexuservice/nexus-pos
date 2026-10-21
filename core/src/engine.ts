@@ -1,9 +1,9 @@
 import type {
   AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, Emisor, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
-  Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
+  Purchase, PurchaseInput, PurchaseLine, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
 } from './types';
-import { PAY_METHODS, isTerminalMethod } from './types';
+import { PAY_METHODS, PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, isTerminalMethod } from './types';
 import { splitIva } from './money';
 import { isValidRut, normalizeRut } from './rut';
 import { buildBoletaXml } from './billing';
@@ -55,6 +55,7 @@ export class PosEngine {
     this.state = state;
     this.state.creditPayments ??= [];
     this.state.consumptions ??= [];
+    this.state.purchases ??= [];
     this.now = opts.now ?? (() => new Date());
     this.emisor = opts.emisor ?? DEFAULT_EMISOR;
     this.terminal = opts.terminal ?? 'CAJA1';
@@ -199,17 +200,22 @@ export class PosEngine {
     const channels: Channel[] = channel === 'all' ? ['physical', 'online'] : [channel];
     const cells = channels.map((c) => this.state.stock[this.key(branchId, p.id, c)] ?? { qty: 0, reserved: 0 });
     const currentQty = cells.reduce((n, c) => n + c.qty, 0);
-    const moves = this.state.movements.filter((m) =>
-      m.branchId === branchId && m.productId === p.id && channels.includes(m.channel) && !(channel === 'all' && m.reason === 'transfer'));
+    // Orden por fecha del movimiento (las compras llevan la fecha del documento, que puede ser anterior a cuando se registraron).
+    const moves = this.state.movements
+      .filter((m) => m.branchId === branchId && m.productId === p.id && channels.includes(m.channel) && !(channel === 'all' && m.reason === 'transfer'))
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
     const label: Record<Channel, string> = { physical: 'Caja', online: 'Online' };
     const detailOf = (m: StockMovement): string => {
       const sale = this.state.sales.find((s) => s.id === m.refId);
       const cons = (this.state.consumptions ?? []).find((c) => c.id === m.refId);
+      const buy = (this.state.purchases ?? []).find((x) => x.id === m.refId);
+      const doc = buy ? `${PURCHASE_DOC_LABEL[buy.docType]} N° ${buy.docNumber}` : '';
       switch (m.reason) {
+        case 'purchase': return buy ? `Compra · ${doc} · ${buy.supplierName}` : 'Compra';
         case 'sale': return sale ? `Venta${sale.channel === 'online' ? ' online' : ''} #${sale.number}` : 'Venta';
         case 'consumption': return cons ? `Consumo #${cons.number}${cons.note ? ` · ${cons.note}` : ''}` : 'Consumo';
-        case 'return': return sale ? `Anulación de venta #${sale.number}` : cons ? `Anulación de consumo #${cons.number}` : 'Devolución';
+        case 'return': return sale ? `Anulación de venta #${sale.number}` : cons ? `Anulación de consumo #${cons.number}` : buy ? `Anulación de compra · ${doc}` : 'Devolución';
         case 'transfer': return m.delta < 0 ? `Traspaso a ${label[m.channel === 'physical' ? 'online' : 'physical']}` : `Traspaso desde ${label[m.channel === 'physical' ? 'online' : 'physical']}`;
         default: return 'Ajuste de inventario';
       }
@@ -219,7 +225,7 @@ export class PosEngine {
     const all: StockCardRow[] = moves.map((m) => {
       balance += m.delta;
       return {
-        id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m),
+        id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m), dateOnly: m.reason === 'purchase' || undefined,
         entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance,
       };
     });
@@ -687,6 +693,134 @@ export class PosEngine {
       this.emit(paymentId, 'cancelled', 'Cobro cancelado');
     }
     return clone(payment);
+  }
+
+  // ---------- compras a proveedores ----------
+  private totalQty(productId: string): number {
+    let n = 0;
+    for (const [k, c] of Object.entries(this.state.stock)) if (k.split(':')[1] === productId) n += c.qty;
+    return n;
+  }
+
+  /**
+   * Registra una compra: las unidades entran a la caja como «compra» (con proveedor, documento y fecha), no como ajuste.
+   * Una línea puede crear el producto en el mismo acto. Todo se valida antes de modificar nada.
+   * Con `updateCost` (por defecto sí) el costo del producto pasa a ser el promedio ponderado entre lo que había y lo comprado.
+   */
+  registerPurchase(input: PurchaseInput): Purchase {
+    const today = santiagoDay(this.now().toISOString());
+    if (!this.state.branches.some((b) => b.id === input.branchId)) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    const supplierName = input.supplierName?.trim();
+    if (!supplierName) throw new PosError('INVALID_DATA', 'El proveedor es obligatorio');
+    let supplierRut: string | undefined;
+    if (input.supplierRut?.trim()) {
+      if (!isValidRut(input.supplierRut)) throw new PosError('INVALID_RUT', 'RUT del proveedor inválido');
+      supplierRut = normalizeRut(input.supplierRut);
+    }
+    const docType = input.docType ?? 'factura';
+    if (!PURCHASE_DOC_TYPES.includes(docType)) throw new PosError('INVALID_DATA', 'Tipo de documento inválido');
+    const docNumber = input.docNumber?.trim();
+    if (!docNumber) throw new PosError('INVALID_DATA', `El número de ${PURCHASE_DOC_LABEL[docType].toLowerCase()} es obligatorio`);
+    const docDate = input.docDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(docDate ?? '') || Number.isNaN(Date.parse(docDate))) throw new PosError('INVALID_DATA', 'Fecha del documento inválida');
+    if (docDate > today) throw new PosError('INVALID_DATA', 'La fecha del documento no puede ser futura');
+    const sameSupplier = (p: Purchase) => (supplierRut ? p.supplierRut === supplierRut : norm(p.supplierName) === norm(supplierName));
+    if ((this.state.purchases ?? []).some((p) => p.status === 'active' && p.docType === docType && p.docNumber.toLowerCase() === docNumber.toLowerCase() && sameSupplier(p))) {
+      throw new PosError('INVALID_DATA', `Ya registraste ${PURCHASE_DOC_LABEL[docType].toLowerCase()} N° ${docNumber} de este proveedor`);
+    }
+    if (!Array.isArray(input.lines) || input.lines.length === 0) throw new PosError('EMPTY_CART', 'Agrega al menos un producto a la compra');
+
+    const newBarcodes = new Set<string>();
+    input.lines.forEach((l, i) => {
+      const n = i + 1;
+      if (!Number.isInteger(l.quantity) || l.quantity <= 0) throw new PosError('INVALID_QTY', `Línea ${n}: la cantidad debe ser un entero mayor que 0`);
+      if (!Number.isInteger(l.unitCostClp) || l.unitCostClp < 0) throw new PosError('INVALID_AMOUNT', `Línea ${n}: el costo unitario debe ser un entero de 0 o más`);
+      if (!l.productId === !l.newProduct) throw new PosError('INVALID_DATA', `Línea ${n}: elige un producto existente o crea uno nuevo`);
+      if (l.productId) {
+        if (!this.state.products.some((p) => p.id === l.productId)) throw new PosError('NOT_FOUND', `Línea ${n}: el producto no existe`);
+        return;
+      }
+      const np = l.newProduct!;
+      if (!np.name?.trim()) throw new PosError('INVALID_DATA', `Línea ${n}: el producto nuevo necesita nombre`);
+      if (!Number.isInteger(np.priceClp) || np.priceClp < 0) throw new PosError('INVALID_DATA', `Línea ${n}: el precio de venta del producto nuevo es inválido`);
+      const bc = np.barcode?.trim();
+      if (bc && (newBarcodes.has(bc) || this.state.products.some((p) => p.barcode === bc))) throw new PosError('INVALID_DATA', `Línea ${n}: ya existe un producto con ese código de barras`);
+      if (bc) newBarcodes.add(bc);
+    });
+
+    const createdAt = this.now().toISOString();
+    // Hoy se fecha con la hora real; un documento de otro día, a mediodía de Chile (15:00 UTC cae el mismo día con o sin horario de verano).
+    const at = docDate === today ? createdAt : `${docDate}T15:00:00.000Z`;
+    const id = this.id('purchase');
+    const lines: PurchaseLine[] = [];
+    for (const l of input.lines) {
+      const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, costClp: l.unitCostClp }).id;
+      const product = this.state.products.find((p) => p.id === productId)!;
+      if (input.updateCost !== false) {
+        const before = Math.max(0, this.totalQty(productId));
+        product.costClp = before > 0 ? Math.round((before * product.costClp + l.quantity * l.unitCostClp) / (before + l.quantity)) : l.unitCostClp;
+      }
+      this.cell(input.branchId, productId, 'physical').qty += l.quantity;
+      this.state.movements.push({ id: this.id('mov'), branchId: input.branchId, productId, channel: 'physical', delta: l.quantity, reason: 'purchase', refId: id, at });
+      lines.push({ productId, name: product.name, quantity: l.quantity, unitCostClp: l.unitCostClp, totalClp: l.quantity * l.unitCostClp });
+    }
+    const netClp = lines.reduce((n, l) => n + l.totalClp, 0);
+    const ivaClp = Math.round(netClp * 0.19);
+    const purchases = this.state.purchases!;
+    const purchase: Purchase = {
+      id, number: purchases.length + 1, branchId: input.branchId, supplierName, supplierRut, docType, docNumber, docDate,
+      note: input.note?.trim() || undefined, lines, netClp, ivaClp, totalClp: netClp + ivaClp, status: 'active', createdAt,
+    };
+    purchases.push(purchase);
+    return clone(purchase);
+  }
+
+  /** Compras por fecha del documento, de la más nueva a la más antigua. */
+  listPurchases(filter: { from?: string; to?: string; branchId?: string; limit?: number } = {}): Purchase[] {
+    const f = filter ?? {};
+    return clone(
+      [...(this.state.purchases ?? [])]
+        .filter((p) => (!f.branchId || p.branchId === f.branchId) && (!f.from || p.docDate >= f.from) && (!f.to || p.docDate <= f.to))
+        .sort((a, b) => (a.docDate === b.docDate ? b.number - a.number : a.docDate < b.docDate ? 1 : -1))
+        .slice(0, f.limit ?? 200),
+    );
+  }
+
+  /** Proveedores ya usados (para autocompletar), el más reciente primero. */
+  listSuppliers(): { name: string; rut?: string }[] {
+    const seen = new Map<string, { name: string; rut?: string }>();
+    for (const p of [...(this.state.purchases ?? [])].reverse()) {
+      const key = p.supplierRut ?? norm(p.supplierName);
+      if (!seen.has(key)) seen.set(key, { name: p.supplierName, rut: p.supplierRut });
+    }
+    return clone([...seen.values()]);
+  }
+
+  /**
+   * Anula una compra y saca las unidades de la caja. Solo si todavía están: si ya se vendieron, consumieron
+   * o pasaron a online, hay que corregir eso primero. El costo del producto no se revierte.
+   */
+  voidPurchase(purchaseId: string, reason?: string | null): Purchase {
+    const p = (this.state.purchases ?? []).find((x) => x.id === purchaseId);
+    if (!p) throw new PosError('NOT_FOUND', 'Compra no existe');
+    if (p.status === 'voided') throw new PosError('NOT_ALLOWED', 'La compra ya está anulada');
+    const perProduct = new Map<string, { name: string; qty: number }>();
+    for (const l of p.lines) perProduct.set(l.productId, { name: l.name, qty: (perProduct.get(l.productId)?.qty ?? 0) + l.quantity });
+    for (const [productId, { name, qty }] of perProduct) {
+      const c = this.cell(p.branchId, productId, 'physical');
+      if (c.qty - c.reserved < qty) {
+        throw new PosError('NOT_ALLOWED', `No se puede anular: de «${name}» la compra trajo ${qty} y en caja solo quedan ${Math.max(0, c.qty - c.reserved)} disponibles`);
+      }
+    }
+    const iso = this.now().toISOString();
+    for (const [productId, { qty }] of perProduct) {
+      this.cell(p.branchId, productId, 'physical').qty -= qty;
+      this.state.movements.push({ id: this.id('mov'), branchId: p.branchId, productId, channel: 'physical', delta: -qty, reason: 'return', refId: p.id, at: iso });
+    }
+    p.status = 'voided';
+    p.voidedAt = iso;
+    p.voidReason = reason?.trim() || undefined;
+    return clone(p);
   }
 
   // ---------- consumo propio ----------

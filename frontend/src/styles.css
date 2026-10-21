@@ -82,6 +82,13 @@ main > * { flex: 1; }
 .cart { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); position: sticky; top: 16px; max-height: calc(100dvh - 110px); min-height: 380px; }
 .cart-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .cart-head h2 { font-size: 17px; }
+.purchase-lines { display: grid; gap: 10px; }
+.purchase-line { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 8px; background: var(--bg); }
+.purchase-line .row { display: grid; grid-template-columns: minmax(0, 2fr) 90px 130px 110px 32px; gap: 8px; align-items: end; }
+.purchase-line .row.new { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.line-total-box { font-weight: 700; text-align: right; padding: 10px 0; }
+.purchase-totals { display: flex; gap: 18px; justify-content: flex-end; flex-wrap: wrap; font-size: 14px; }
+@media (max-width: 720px) { .purchase-line .row, .purchase-line .row.new { grid-template-columns: 1fr 1fr; } }
 .link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--brand); font-weight: 600; cursor: pointer; text-align: left; }
 .link-btn:hover { text-decoration: underline; }
 .stock-card { max-height: 50vh; overflow: auto; }

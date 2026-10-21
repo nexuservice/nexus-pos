@@ -44,7 +44,7 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
             <tbody>
               {card.rows.map((r) => (
                 <tr key={r.id}>
-                  <td>{fmtDate(r.at)} {fmtTime(r.at)}</td><td>{r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : 'Online'}</td>}
+                  <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td><td>{r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : 'Online'}</td>}
                   <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
                 </tr>
               ))}

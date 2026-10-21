@@ -353,6 +353,130 @@ describe('convenio (venta a crédito)', () => {
   });
 });
 
+describe('compras a proveedores', () => {
+  const NOW = () => new Date('2026-10-20T15:00:00Z');
+  const base = { branchId: B, supplierName: 'Distribuidora Sur', supplierRut: '11.111.111-1', docNumber: '4521', docDate: '2026-10-10' };
+  const mk = (o: Parameters<typeof seedState>[0] = { physical: 10, online: 0 }) => make(o, { now: NOW });
+
+  it('ingresa las unidades como compra, crea el producto nuevo y calcula neto, IVA y costo promedio', () => {
+    const e = mk();
+    const p = e.registerPurchase({
+      ...base,
+      lines: [
+        { productId: COLA, quantity: 20, unitCostClp: 1000 },
+        { newProduct: { name: 'Té en bolsas', category: 'Despensa', priceClp: 2500 }, quantity: 12, unitCostClp: 1500 },
+      ],
+    });
+    expect(p).toMatchObject({ number: 1, docType: 'factura', supplierRut: '11111111-1', netClp: 38_000, ivaClp: 7_220, totalClp: 45_220, status: 'active' });
+    expect(e.available(B, COLA, 'physical')).toBe(30);
+    const te = e.listProducts().find((x) => x.name === 'Té en bolsas')!;
+    expect(te).toMatchObject({ category: 'Despensa', priceClp: 2500, costClp: 1500 });
+    expect(e.available(B, te.id, 'physical')).toBe(12);
+    expect(e.available(B, te.id, 'online')).toBe(0);
+    // (10 × 1.294 + 20 × 1.000) / 30 = 1.098
+    expect(e.listProducts().find((x) => x.id === COLA)!.costClp).toBe(1098);
+    expect(e.movements(COLA, 1)[0]).toMatchObject({ delta: 20, reason: 'purchase', refId: p.id });
+  });
+
+  it('la tarjeta de existencia muestra la compra con su documento, proveedor y la fecha de la factura', async () => {
+    const e = mk();
+    const s = e.createCart(B, 'physical'); e.cartAdd(s.id, COLA, 3);
+    await payCart(e, fast(), { cartId: s.id, method: 'cash', receivedClp: 6000 });
+    e.registerPurchase({ ...base, lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000 }] });
+    const card = e.stockCard(B, COLA, 'physical');
+    expect(card.openingQty).toBe(10);
+    // la compra tiene fecha anterior a la venta, así que va antes aunque se registró después
+    expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
+      [expect.stringMatching(/^Venta #1$/), 0, 3, 27],
+      ['Compra · Factura N° 4521 · Distribuidora Sur', 20, 0, 30],
+    ]);
+    expect(card.rows[1]).toMatchObject({ at: '2026-10-10T15:00:00.000Z', dateOnly: true, type: 'purchase' });
+    expect(card).toMatchObject({ closingQty: 27, currentQty: 27 });
+    expect(e.stockCard(B, COLA, 'physical', '2026-10-10', '2026-10-10').rows).toHaveLength(1);
+  });
+
+  it('una compra con fecha de hoy usa la hora real', () => {
+    const e = mk();
+    e.registerPurchase({ ...base, docDate: '2026-10-20', lines: [{ productId: COLA, quantity: 1, unitCostClp: 1000 }] });
+    expect(e.movements(COLA, 1)[0]!.at).toBe('2026-10-20T15:00:00.000Z');
+    expect(e.stockCard(B, COLA, 'physical').rows[0]!.detail).toContain('Factura N° 4521');
+  });
+
+  it('con updateCost en falso no cambia el costo del producto', () => {
+    const e = mk();
+    e.registerPurchase({ ...base, updateCost: false, lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000 }] });
+    expect(e.listProducts().find((x) => x.id === COLA)!.costClp).toBe(Math.round(1990 * 0.65));
+  });
+
+  it('valida todo antes de modificar: un error en una línea no deja nada a medias', () => {
+    const e = mk();
+    const products = e.listProducts().length;
+    const buy = (over: object) => () => e.registerPurchase({ ...base, lines: [{ productId: COLA, quantity: 5, unitCostClp: 1000 }], ...over });
+    expect(buy({ supplierName: '  ' })).toThrow(/proveedor/);
+    expect(buy({ supplierRut: '11.111.111-9' })).toThrow(/RUT/);
+    expect(buy({ docNumber: ' ' })).toThrow(/número/);
+    expect(buy({ docDate: '2026-13-45' })).toThrow(/Fecha/);
+    expect(buy({ docDate: '2026-10-21' })).toThrow(/futura/);
+    expect(buy({ lines: [] })).toThrow(/al menos un producto/);
+    expect(buy({ lines: [{ productId: COLA, quantity: 0, unitCostClp: 1000 }] })).toThrow(/cantidad/);
+    expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 10.5 }] })).toThrow(/costo/);
+    expect(buy({ lines: [{ productId: 'nope', quantity: 1, unitCostClp: 1 }] })).toThrow(/no existe/);
+    expect(buy({ lines: [{ productId: COLA, newProduct: { name: 'x', priceClp: 1 }, quantity: 1, unitCostClp: 1 }] })).toThrow(/existente o crea/);
+    expect(buy({ lines: [{ productId: COLA, quantity: 5, unitCostClp: 1000 }, { newProduct: { name: ' ', priceClp: 1 }, quantity: 1, unitCostClp: 1 }] })).toThrow(/nombre/);
+    expect(buy({ lines: [{ newProduct: { name: 'A', priceClp: 1, barcode: '999' }, quantity: 1, unitCostClp: 1 }, { newProduct: { name: 'B', priceClp: 1, barcode: '999' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/código de barras/);
+    expect(e.available(B, COLA, 'physical')).toBe(10);
+    expect(e.listProducts()).toHaveLength(products);
+    expect(e.listPurchases()).toHaveLength(0);
+  });
+
+  it('no deja registrar dos veces el mismo documento del mismo proveedor', () => {
+    const e = mk();
+    const lines = [{ productId: COLA, quantity: 1, unitCostClp: 1000 }];
+    const first = e.registerPurchase({ ...base, lines });
+    expect(() => e.registerPurchase({ ...base, supplierName: 'Otro nombre', lines })).toThrow(/Ya registraste factura N° 4521/);
+    e.registerPurchase({ ...base, supplierRut: '22.222.222-2', supplierName: 'Otro proveedor', lines });
+    e.registerPurchase({ ...base, docType: 'boleta', lines });
+    e.voidPurchase(first.id);
+    expect(e.registerPurchase({ ...base, lines }).number).toBe(4);
+  });
+
+  it('anular saca las unidades y queda en la tarjeta, pero no si ya salieron', async () => {
+    const e = mk();
+    const p = e.registerPurchase({ ...base, lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000 }] });
+    e.voidPurchase(p.id, '  factura equivocada ');
+    expect(e.available(B, COLA, 'physical')).toBe(10);
+    expect(e.listPurchases()[0]).toMatchObject({ status: 'voided', voidReason: 'factura equivocada' });
+    expect(e.stockCard(B, COLA, 'physical').rows[0]).toMatchObject({ detail: 'Anulación de compra · Factura N° 4521', exit: 20, balance: 10 });
+    expect(() => e.voidPurchase(p.id)).toThrow(/ya está anulada/);
+    expect(() => e.voidPurchase('nope')).toThrow(PosError);
+
+    const q = e.registerPurchase({ ...base, docNumber: '9', lines: [{ productId: COLA, quantity: 5, unitCostClp: 1000 }] });
+    const s = e.createCart(B, 'physical'); e.cartAdd(s.id, COLA, 13);
+    await payCart(e, fast(), { cartId: s.id, method: 'cash', receivedClp: 30_000 });
+    expect(() => e.voidPurchase(q.id)).toThrow(/solo quedan 2/);
+    expect(e.available(B, COLA, 'physical')).toBe(2);
+  });
+
+  it('lista por fecha del documento y recuerda los proveedores', () => {
+    const e = mk();
+    const lines = [{ productId: COLA, quantity: 1, unitCostClp: 1000 }];
+    e.registerPurchase({ ...base, docNumber: '1', docDate: '2026-10-01', lines });
+    e.registerPurchase({ ...base, docNumber: '2', docDate: '2026-10-15', lines });
+    e.registerPurchase({ ...base, supplierName: 'Sin RUT Ltda', supplierRut: undefined, docNumber: '3', docDate: '2026-10-08', lines });
+    expect(e.listPurchases().map((x) => x.docNumber)).toEqual(['2', '3', '1']);
+    expect(e.listPurchases({ from: '2026-10-05', to: '2026-10-10' }).map((x) => x.docNumber)).toEqual(['3']);
+    expect(e.listSuppliers()).toEqual([{ name: 'Sin RUT Ltda', rut: undefined }, { name: 'Distribuidora Sur', rut: '11111111-1' }]);
+  });
+
+  it('una base guardada antes de esta función sigue funcionando', () => {
+    const old = seedState();
+    delete (old as { purchases?: unknown }).purchases;
+    const e = new PosEngine(old, { now: NOW });
+    expect(e.listPurchases()).toEqual([]);
+    expect(e.registerPurchase({ ...base, lines: [{ productId: COLA, quantity: 1, unitCostClp: 1 }] }).number).toBe(1);
+  });
+});
+
 describe('tarjeta de existencia', () => {
   it('lista entradas y salidas con su origen y el saldo después de cada movimiento', async () => {
     const e = make({ physical: 10, online: 4 });

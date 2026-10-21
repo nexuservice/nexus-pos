@@ -176,6 +176,66 @@ export interface Sale {
   documentId: string | null;
 }
 
+export const PURCHASE_DOC_TYPES = ['factura', 'boleta', 'guia'] as const;
+export type PurchaseDocType = (typeof PURCHASE_DOC_TYPES)[number];
+export const PURCHASE_DOC_LABEL: Record<PurchaseDocType, string> = { factura: 'Factura', boleta: 'Boleta', guia: 'Guía de despacho' };
+
+export interface PurchaseLine {
+  productId: string;
+  name: string;
+  quantity: number;
+  /** Costo unitario neto (sin IVA), tal como viene en la factura. */
+  unitCostClp: number;
+  totalClp: number;
+}
+
+/**
+ * Compra a un proveedor: entra al inventario como «compra» (no como ajuste), con el documento y su fecha,
+ * para que la tarjeta de existencia refleje el origen real de cada unidad.
+ */
+export interface Purchase {
+  id: string;
+  number: number;
+  branchId: string;
+  supplierName: string;
+  supplierRut?: string;
+  docType: PurchaseDocType;
+  docNumber: string;
+  /** Fecha del documento (YYYY-MM-DD). */
+  docDate: string;
+  note?: string;
+  lines: PurchaseLine[];
+  netClp: number;
+  ivaClp: number;
+  totalClp: number;
+  status: 'active' | 'voided';
+  voidedAt?: string;
+  voidReason?: string;
+  /** Cuándo se registró en el sistema. */
+  createdAt: string;
+}
+
+/** Línea de una compra por registrar: un producto existente o uno nuevo que se crea con la compra. */
+export interface PurchaseLineInput {
+  productId?: string;
+  newProduct?: { name: string; category?: string; sku?: string; barcode?: string; priceClp: number; published?: boolean };
+  quantity: number;
+  unitCostClp: number;
+}
+
+export interface PurchaseInput {
+  branchId: string;
+  supplierName: string;
+  supplierRut?: string;
+  docType?: PurchaseDocType;
+  docNumber: string;
+  docDate: string;
+  note?: string;
+  /** Recalcula el costo del producto (promedio ponderado con lo que ya hay). Por defecto sí. */
+  updateCost?: boolean;
+  lines: PurchaseLineInput[];
+}
+
 /**
  * Consumo propio: salida de inventario que no es una venta. Se valoriza al costo, así que no genera
  * ingreso ni ganancia, y no emite boleta ni usa folio.
@@ -215,7 +275,7 @@ export interface StockMovement {
   productId: string;
   channel: Channel;
   delta: number;
-  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption';
+  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption' | 'purchase';
   refId?: string;
   at: string;
 }
@@ -228,6 +288,8 @@ export interface StockCardRow {
   type: StockMovement['reason'];
   /** Qué originó el movimiento (Venta #12, Consumo #3, Ajuste, Traspaso a Online…). */
   detail: string;
+  /** Las compras se fechan con el día del documento, así que solo cuenta la fecha, no la hora. */
+  dateOnly?: boolean;
   entry: number;
   exit: number;
   /** Existencia después de este movimiento. */
@@ -384,6 +446,8 @@ export interface EngineState {
   creditPayments?: CreditPayment[];
   /** Consumos propios. Opcional: las bases guardadas antes de esta función no lo traen. */
   consumptions?: Consumption[];
+  /** Compras a proveedores. Opcional: las bases guardadas antes de esta función no lo traen. */
+  purchases?: Purchase[];
   nextFolio: number;
   lastFolio: number;
   saleSeq: number;

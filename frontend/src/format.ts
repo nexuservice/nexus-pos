@@ -90,7 +90,7 @@ const STOCK_CHANNEL_LABEL = { all: 'Total (caja + online)', physical: 'Caja', on
 /** Tarjeta de existencia lista para imprimir en hoja: del movimiento más antiguo al más nuevo, con saldo. */
 export function stockCardHtml(card: StockCard, range: { from?: string; to?: string } = {}, business = 'Nexus'): string {
   const rows = [...card.rows].reverse().map((r) =>
-    `<tr><td>${esc(fmtDate(r.at))} ${esc(fmtTime(r.at))}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : 'Online'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td></tr>`).join('');
+    `<tr><td>${esc(fmtDate(r.at))}${r.dateOnly ? '' : ` ${esc(fmtTime(r.at))}`}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : 'Online'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td></tr>`).join('');
   const cols = card.channel === 'all' ? 6 : 5;
   const period = range.from || range.to ? ` · Período: ${esc(range.from ?? 'inicio')} a ${esc(range.to ?? 'hoy')}` : '';
   return `<h1>${esc(business)} · Tarjeta de existencia</h1>

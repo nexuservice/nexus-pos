@@ -8,6 +8,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
           <li><b>Caja</b>: vender en el local. Requiere una jornada abierta.</li>
           <li><b>Tienda online</b>: catálogo y carrito para tus clientes. No requiere jornada.</li>
           <li><b>Administración</b>: productos, clientes, cajeros, promociones, inventario y jornadas. En <i>Inventario</i>, toca el nombre de un producto para ver su <b>tarjeta de existencia</b>: cada entrada y salida (ventas, consumos, ajustes, traspasos y anulaciones) con el saldo después de cada movimiento. Se puede ver por Total, Caja u Online, filtrar por fechas e imprimir.</li>
+          <li><b>Compras</b>: en <i>Administración → Productos</i> hay dos botones, <b>Nuevo producto</b> (crea el producto sin unidades) y <b>Nueva compra</b>. La compra registra proveedor, documento (factura, boleta o guía), número y fecha, y las cantidades con su costo neto; en la misma compra puedes crear productos nuevos. Las unidades entran a la caja como <i>compra</i>, no como ajuste, y quedan en la tarjeta de existencia con el documento y la fecha de la factura (el saldo inicial no cambia). Por defecto el costo del producto pasa a ser el promedio ponderado. Todas las compras están en <i>Administración → Compras</i>, donde se pueden anular mientras las unidades sigan en la caja.</li>
           <li><b>Panel</b> e <b>Historial</b>: analítica y revisión de ventas.</li>
         </ul>
       </>

@@ -5,14 +5,15 @@ import {
 } from '@nexus/core';
 import type { PosApi } from '../api';
 import { DebtModal } from '../components';
+import { PurchaseModal, PurchasesSection } from './Purchases';
 import { StockCardModal } from './StockCard';
 import { fmtDateTime } from '../format';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
 
-type Section = 'products' | 'clients' | 'cashiers' | 'promos' | 'inventory' | 'shifts';
+type Section = 'products' | 'purchases' | 'clients' | 'cashiers' | 'promos' | 'inventory' | 'shifts';
 const SECTIONS: [Section, string][] = [
-  ['products', '📦 Productos'], ['clients', '👥 Clientes'], ['cashiers', '👤 Cajeros'], ['promos', '🎫 Descuentos y promociones'],
+  ['products', '📦 Productos'], ['purchases', '🧾 Compras'], ['clients', '👥 Clientes'], ['cashiers', '👤 Cajeros'], ['promos', '🎫 Descuentos y promociones'],
   ['inventory', '📊 Inventario'], ['shifts', '🕐 Jornadas'],
 ];
 
@@ -27,6 +28,7 @@ export function AdminView({ api, branchId }: { api: PosApi; branchId: string | n
       </nav>
       <div className="admin-body">
         {section === 'products' && <Products api={api} branchId={branchId} />}
+        {section === 'purchases' && <PurchasesSection api={api} branchId={branchId} />}
         {section === 'clients' && <Clients api={api} />}
         {section === 'cashiers' && <Cashiers api={api} />}
         {section === 'promos' && <Promos api={api} />}
@@ -46,24 +48,30 @@ function useList<T>(load: () => Promise<T[]>) {
 
 function Products({ api, branchId }: { api: PosApi; branchId: string | null }) {
   const [rows, reload] = useList(() => api.rpc.listProducts());
-  const blank = { name: '', sku: '', barcode: '', category: '', price: '', cost: '', stock: '', published: true, active: true };
+  const blank = { name: '', sku: '', barcode: '', category: '', price: '', cost: '', published: true, active: true };
   const [f, setF] = useState<typeof blank & { id?: string }>(blank);
   const [open, setOpen] = useState(false);
+  const [buying, setBuying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const edit = (p: Product) => { setF({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, price: String(p.priceClp), cost: String(p.costClp), stock: '', published: p.published, active: p.active }); setOpen(true); };
+  const edit = (p: Product) => { setF({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, price: String(p.priceClp), cost: String(p.costClp), published: p.published, active: p.active }); setOpen(true); };
   const save = async () => {
     try {
       setError(null);
-      const qty = f.id ? 0 : Number(f.stock) || 0;
-      if (!Number.isInteger(qty) || qty < 0) throw new Error('La cantidad inicial debe ser un número entero, 0 o mayor');
-      const saved = await api.rpc.upsertProduct({ id: f.id, name: f.name, sku: f.sku, barcode: f.barcode, category: f.category, priceClp: Number(f.price), costClp: Number(f.cost) || 0, published: f.published, active: f.active });
-      if (qty > 0 && branchId) await api.rpc.adjustStock(branchId, saved.id, 'physical', qty);
+      await api.rpc.upsertProduct({ id: f.id, name: f.name, sku: f.sku, barcode: f.barcode, category: f.category, priceClp: Number(f.price), costClp: Number(f.cost) || 0, published: f.published, active: f.active });
       setOpen(false); setF(blank); await reload();
     } catch (e) { setError(msg(e)); }
   };
   return (
     <>
-      <div className="page-head"><h2>Productos</h2><button className="btn primary sm" onClick={() => { setF(blank); setOpen(true); }}>➕ Nuevo producto</button></div>
+      <div className="page-head">
+        <h2>Productos</h2>
+        <div className="head-actions">
+          <button className="btn primary sm" onClick={() => { setF(blank); setOpen(true); }}>➕ Nuevo producto</button>
+          {branchId && <button className="btn primary sm" onClick={() => setBuying(true)}>🧾 Nueva compra</button>}
+        </div>
+      </div>
+      <p className="hint">Un producto nuevo parte sin unidades: para ingresarlas registra una <b>compra</b> con los datos de la factura.</p>
+      {buying && branchId && <PurchaseModal api={api} branchId={branchId} onClose={() => setBuying(false)} onSaved={() => { reload().catch(() => undefined); }} />}
       {open && (
         <div className="inline-form">
           <div className="two-col">
@@ -73,7 +81,6 @@ function Products({ api, branchId }: { api: PosApi; branchId: string | null }) {
             <label className="field">Código de barras<input value={f.barcode} onChange={(e) => setF({ ...f, barcode: e.target.value })} /></label>
             <label className="field">Precio (CLP, IVA incl.)<input inputMode="numeric" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} /></label>
             <label className="field">Costo (CLP)<input inputMode="numeric" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} /></label>
-            {!f.id && <label className="field">Cantidad inicial en local<input inputMode="numeric" placeholder="0" value={f.stock} onChange={(e) => setF({ ...f, stock: e.target.value })} /></label>}
             <label className="check"><input type="checkbox" checked={f.published} onChange={(e) => setF({ ...f, published: e.target.checked })} /> Visible en tienda online</label>
             <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Activo</label>
           </div>
