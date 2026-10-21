@@ -196,7 +196,7 @@ tr.voided td { opacity: .55; text-decoration: line-through; } tr.voided td:last-
 .spinner { width: 48px; height: 48px; border: 5px solid var(--line); border-top-color: var(--brand); border-radius: 50%; margin: 0 auto; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .dot::after { transition: none; } }
-.ok, .bad { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-size: 28px; color: #fff; margin: 0 auto; }
+div.ok, div.bad { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-size: 28px; color: #fff; margin: 0 auto; }
 div.ok { background: var(--ok); } div.bad { background: var(--bad); }
 .receipt { text-align: left; border: 1px dashed var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .receipt > div { display: flex; justify-content: space-between; gap: 12px; } .receipt .big { font-size: 20px; }
