@@ -1,4 +1,4 @@
-import { formatClp, type Ticket } from '@nexus/core';
+import { PAY_METHOD_LABEL, formatClp, type ClientBalance, type Ticket } from '@nexus/core';
 
 export function download(filename: string, content: string, mime: string): void {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -56,6 +56,30 @@ export function comandaHtml(t: Ticket, business = 'Nexus'): string {
     <div><b>${esc(t.customerName)}</b></div>${t.phone ? `<div>Tel: ${esc(t.phone)}</div>` : ''}<div>Canal: ${esc(CHANNEL_LABEL[t.channel])}</div>
     ${t.note ? `<div>Obs.: ${esc(t.note)}</div>` : ''}<hr>${lines}<hr><div class="r"><b>Total</b><b>${formatClp(t.totalClp)}</b></div>
     <div>${t.paid ? 'PAGADO' : 'PENDIENTE DE PAGO'}</div>`;
+}
+
+/**
+ * Estado de cuenta de convenio: cada compra con sus productos, los abonos y el saldo,
+ * para que el cliente revise lo que se le cobra antes de pagar.
+ */
+export function estadoCuentaHtml(b: ClientBalance, business = 'Nexus'): string {
+  const small = (s: string) => `<div style="color:#444;font-size:11px">${s}</div>`;
+  const sales = [...b.sales].reverse().map((s) => {
+    const items = s.lines.map((l) => `<div class="r"><span>${l.quantity} × ${esc(l.name)}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>${l.quantity > 1 ? small(`&nbsp;&nbsp;${formatClp(l.unitPriceClp)} c/u`) : ''}`).join('');
+    const discount = s.discountClp > 0 ? `<div class="r"><span>Descuento</span><span>−${formatClp(s.discountClp)}</span></div>` : '';
+    return `<div class="r"><b>Compra #${s.number}</b><span>${esc(fmtDateTime(s.paidAt))}</span></div>${items}${discount}<div class="r"><b>Total compra</b><b>${formatClp(s.totalClp)}</b></div><hr>`;
+  }).join('');
+  const payments = b.payments.length
+    ? [...b.payments].reverse().map((p) => `<div class="r"><span>${esc(fmtDateTime(p.at))} · ${esc(PAY_METHOD_LABEL[p.method])}</span><span>−${formatClp(p.amountClp)}</span></div>`).join('')
+    : '<div>Sin abonos</div>';
+  return `<h1>${esc(business)} · ESTADO DE CUENTA</h1><div>Compras a convenio (crédito)</div><div>Emitido: ${esc(fmtDateTime(new Date().toISOString()))}</div><hr>
+    <div><b>${esc(b.clientName)}</b></div>${b.clientRut ? `<div>RUT: ${esc(b.clientRut)}</div>` : ''}<hr>
+    <div><b>COMPRAS</b></div>${sales || '<div>Sin compras a convenio</div><hr>'}
+    <div><b>ABONOS</b></div>${payments}<hr>
+    <div class="r"><span>Total comprado</span><span>${formatClp(b.creditSalesClp)}</span></div>
+    <div class="r"><span>Total abonado</span><span>${formatClp(b.paidClp)}</span></div>
+    <div class="r" style="font-size:15px"><b>SALDO A PAGAR</b><b>${formatClp(b.debtClp)}</b></div><hr>
+    ${small('Revise cada compra antes de pagar. Las compras anuladas no se incluyen.')}`;
 }
 
 export const CHANNEL_LABEL: Record<Ticket['channel'], string> = {

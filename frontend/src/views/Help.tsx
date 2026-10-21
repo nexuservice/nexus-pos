@@ -35,7 +35,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
         <li><b>Cheque y transferencia:</b> se registran al instante, sin terminal.</li>
         <li><b>Convenio (crédito):</b> solo para clientes registrados con RUT y marcados como «Autorizado para convenio» en Administración → Clientes. Sin un cliente autorizado el botón queda bloqueado. La venta se suma a lo que el cliente debe.</li>
         <li><b>Consumo:</b> el botón «🍽️ Consumo» junto a «Limpiar» saca los productos del pedido del inventario valorizados al costo. No es una venta: no cobra, no emite boleta ni usa folio, y no deja ganancia. Queda registrado en el Panel como «Consumo propio». Si te equivocas, en Historial → «Consumos propios» puedes anularlo y las unidades vuelven al inventario.</li>
-        <li><b>Deuda del cliente:</b> al buscar un cliente se ve cuánto debe en total. Con «Pagar deuda» (también en Administración → Clientes → «Cobrar deuda») se registra el pago completo o un abono, con la forma de pago que elijas. Requiere jornada abierta y el abono entra al arqueo de esa jornada.</li>
+        <li><b>Deuda del cliente:</b> al buscar un cliente se ve cuánto debe en total. Con «Pagar deuda» (también en Administración → Clientes → «Cobrar deuda») se registra el pago completo o un abono, con la forma de pago que elijas. Requiere jornada abierta y el abono entra al arqueo de esa jornada. El botón «🖨 Imprimir detalle» entrega un estado de cuenta con cada compra a convenio (productos, cantidades y precios), los abonos y el saldo, para que el cliente revise antes de pagar.</li>
       </ul>
     ),
   },

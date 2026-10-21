@@ -299,6 +299,20 @@ describe('convenio (venta a crédito)', () => {
     expect(e.searchClients('juan')[0]).toMatchObject({ id: JUAN, debtClp: 0 });
   });
 
+  it('el balance trae el detalle de lo comprado para imprimir el estado de cuenta', async () => {
+    const e = make();
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, COLA, 2); e.cartAdd(c.id, AGUA, 1);
+    e.setCustomer(c.id, { clientId: MARIA });
+    await payCart(e, fast(), { cartId: c.id, method: 'convenio' });
+    await sellOnCredit(e, MARIA, AGUA);
+    const b = e.clientBalance(MARIA);
+    expect(b).toMatchObject({ clientName: 'María Pérez', clientRut: '12345678-5', debtClp: 2 * 1990 + 990 + 990 });
+    expect(b.sales).toHaveLength(2);
+    expect(b.sales[1]!.lines.map((l) => [l.quantity, l.name, l.unitPriceClp])).toEqual([[2, 'Bebida cola 1,5 L', 1990], [1, 'Agua mineral 1,5 L', 990]]);
+    expect(b.sales[1]).toMatchObject({ subtotalClp: 4970, discountClp: 0, totalClp: 4970 });
+  });
+
   it('permite abonar o pagar todo, y rechaza pasarse de la deuda', async () => {
     const e = make();
     await sellOnCredit(e, MARIA, COLA);

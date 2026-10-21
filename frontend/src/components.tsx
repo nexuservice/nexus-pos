@@ -3,7 +3,7 @@ import type { Cart, ClientBalance, ClientWithDebt, Customer, PayMethod } from '@
 import { PAY_METHODS, PAY_METHOD_LABEL, formatClp } from '@nexus/core';
 import type { PayPhase, SaleDetail } from './hooks';
 import type { PosApi } from './api/types';
-import { fmtDateTime, printHtml } from './format';
+import { estadoCuentaHtml, fmtDateTime, printHtml } from './format';
 import { msg } from './hooks';
 
 export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -111,6 +111,7 @@ export function DebtModal(props: { api: PosApi; client: { id: string; name: stri
       {error && <div className="alert" role="alert">{error}</div>}
       <div className="row-btns">
         <button className="btn ghost" onClick={props.onClose}>Cerrar</button>
+        {balance && balance.sales.length > 0 && <button className="btn ghost" onClick={() => printHtml(estadoCuentaHtml(balance))}>🖨 Imprimir detalle</button>}
         {debt > 0 && <button className="btn primary" disabled={busy || value <= 0 || value > debt} onClick={pay}>Registrar pago {formatClp(value)}</button>}
       </div>
     </Modal>

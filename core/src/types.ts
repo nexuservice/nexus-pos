@@ -60,11 +60,14 @@ export interface CreditPayment {
 
 export interface ClientBalance {
   clientId: string;
+  clientName: string;
+  clientRut?: string;
   debtClp: number;
   /** Total vendido a convenio (sin las ventas anuladas). */
   creditSalesClp: number;
   paidClp: number;
-  sales: { id: string; number: number; totalClp: number; paidAt: string }[];
+  /** Compras a convenio con su detalle (productos, cantidades y precios), de la más nueva a la más antigua. */
+  sales: { id: string; number: number; totalClp: number; subtotalClp: number; discountClp: number; lines: CartLine[]; paidAt: string }[];
   payments: CreditPayment[];
 }
 

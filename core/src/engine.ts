@@ -218,15 +218,20 @@ export class PosEngine {
 
   /** Lo que el cliente debe en total por ventas a convenio, con el detalle de ventas y abonos. */
   clientBalance(clientId: string): ClientBalance {
-    if (!this.state.clients.some((c) => c.id === clientId)) throw new PosError('NOT_FOUND', 'Cliente no existe');
+    const client = this.state.clients.find((c) => c.id === clientId);
+    if (!client) throw new PosError('NOT_FOUND', 'Cliente no existe');
     const sales = this.creditSales(clientId);
     const payments = (this.state.creditPayments ?? []).filter((p) => p.clientId === clientId);
     return clone({
       clientId,
+      clientName: client.name,
+      clientRut: client.rut,
       debtClp: this.debtOf(clientId),
       creditSalesClp: sales.reduce((n, s) => n + s.totalClp, 0),
       paidClp: payments.reduce((n, p) => n + p.amountClp, 0),
-      sales: sales.map((s) => ({ id: s.id, number: s.number, totalClp: s.totalClp, paidAt: s.paidAt })).reverse(),
+      sales: sales.map((s) => ({
+        id: s.id, number: s.number, totalClp: s.totalClp, subtotalClp: s.subtotalClp, discountClp: s.discountClp, lines: s.lines, paidAt: s.paidAt,
+      })).reverse(),
       payments: [...payments].reverse(),
     });
   }
