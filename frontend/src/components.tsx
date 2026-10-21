@@ -360,7 +360,7 @@ export function Receipt({ sale }: { sale: SaleDetail }) {
       {sale.method === 'cash' && sale.receivedClp !== undefined && (
         <>
           <div><span>Recibido</span><span>{formatClp(sale.receivedClp)}</span></div>
-          <div><span>Vuelto</span><span>{formatClp(sale.changeClp ?? 0)}</span></div>
+          <div><strong>Vuelto</strong><strong>{formatClp(sale.changeClp ?? 0)}</strong></div>
         </>
       )}
       {sale.authCode && <div><span>Autorización</span><span>{sale.authCode}</span></div>}
