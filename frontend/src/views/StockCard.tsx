@@ -155,34 +155,47 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
   }
 
   return (
-    <Modal title={`📇 Tarjeta de existencia · ${product.name}`} xwide onClose={onClose}>
-      <p className="hint">SKU {product.sku} · Código {product.barcode}</p>
-      <div className="filters">
-        <div className="seg">{VIEWS.map(([v, label]) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>{label}</button>)}</div>
-        <label>Desde<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label>Hasta<input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
-        <button className="btn ghost sm" onClick={() => { setFrom(''); setTo(''); }}>Limpiar</button>
+    <Modal
+      title={`Tarjeta de existencia · ${product.name}`} xwide className="stock-modal" onClose={onClose}
+      header={(
+        <div className="stock-head">
+          <h3 className="modal-title">📇 {product.name}</h3>
+          <span className="sku">Tarjeta de existencia · SKU {product.sku} · Código {product.barcode}</span>
+          <span className="spacer" />
+          <button className="btn ghost sm" disabled={!card} onClick={() => card && printHtml(stockCardHtml(card, { from: from || undefined, to: to || undefined }), 'sheet')}>🖨 Imprimir</button>
+          <button className="btn primary sm" onClick={onClose}>Cerrar</button>
+        </div>
+      )}
+    >
+      <div className="stock-top">
+        <div className="stock-filters">
+          <div className="seg">{VIEWS.map(([v, label]) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>{label}</button>)}</div>
+          <label>Desde<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+          <label>Hasta<input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+          <button className="btn ghost sm" onClick={() => { setFrom(''); setTo(''); }}>Limpiar</button>
+        </div>
+        {card && (
+          <div className="stock-stats">
+            <div className="stock-stat"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
+            <div className="stock-stat"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
+            <div className="stock-stat"><span>Precio neto de venta</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small></div>
+            <button className="btn ghost sm" onClick={() => setEditingPrice(true)}>✏️ Editar precio</button>
+          </div>
+        )}
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
       {card && (
         <>
-          <div className="kpis compact">
-            <div className="kpi"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
-            <div className="kpi"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
-            <div className="kpi"><span>Precio neto de venta (unitario)</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small>
-              <button className="btn ghost sm" onClick={() => setEditingPrice(true)}>✏️ Editar precio</button></div>
-          </div>
           <Ledger card={card} from={from} showChannel={showChannel} onOpenSale={openSale} />
-          <p className="hint">
-            En orden cronológico: el saldo corre hacia abajo. Los valores van todos al costo: las entradas, al costo de esa entrada (el inventario inicial, al costo que había antes del primer movimiento), y las salidas, al costo promedio del saldo en ese momento. Por eso el saldo en valores es lo que queda en bodega y llega a $0 cuando las unidades llegan a 0. El precio de venta de cada boleta se muestra debajo del detalle.
-            {showChannel && ' En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.'}
-          </p>
+          <details className="stock-help">
+            <summary>ℹ️ Cómo se calcula</summary>
+            <p>
+              En orden cronológico: el saldo corre hacia abajo. Los valores van todos al costo: las entradas, al costo de esa entrada (el inventario inicial, al costo que había antes del primer movimiento), y las salidas, al costo promedio del saldo en ese momento. Por eso el saldo en valores es lo que queda en bodega y llega a $0 cuando las unidades llegan a 0. El precio de venta de cada boleta se muestra debajo del detalle.
+              {showChannel && ' En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.'}
+            </p>
+          </details>
         </>
       )}
-      <div className="row-btns">
-        <button className="btn ghost" disabled={!card} onClick={() => card && printHtml(stockCardHtml(card, { from: from || undefined, to: to || undefined }), 'sheet')}>🖨 Imprimir</button>
-        <button className="btn primary" onClick={onClose}>Cerrar</button>
-      </div>
     </Modal>
   );
 }
