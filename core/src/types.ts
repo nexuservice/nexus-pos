@@ -290,6 +290,8 @@ export interface StockCardRow {
   detail: string;
   /** Las compras se fechan con el día del documento, así que solo cuenta la fecha, no la hora. */
   dateOnly?: boolean;
+  /** Venta de origen (o la venta anulada), para abrir su boleta desde la tarjeta. */
+  saleId?: string;
   entry: number;
   exit: number;
   /** Existencia después de este movimiento. */

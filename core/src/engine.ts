@@ -226,6 +226,7 @@ export class PosEngine {
       balance += m.delta;
       return {
         id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m), dateOnly: m.reason === 'purchase' || undefined,
+        saleId: (m.reason === 'sale' || m.reason === 'return') && this.state.sales.some((s) => s.id === m.refId) ? m.refId : undefined,
         entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance,
       };
     });

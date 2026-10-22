@@ -496,6 +496,8 @@ describe('tarjeta de existencia', () => {
       [`Venta #${e.getSale(sale.saleId!).number}`, 0, 3, 7],
     ]);
     expect(card).toMatchObject({ closingQty: 9, currentQty: 9, entries: 5, exits: 6 });
+    // solo las ventas apuntan a su boleta; consumo, ajuste y traspaso no
+    expect(card.rows.map((r) => r.saleId)).toEqual([undefined, undefined, undefined, sale.saleId]);
     expect(e.available(B, COLA, 'physical')).toBe(card.closingQty);
     expect(cons.id).toBeTruthy();
   });
@@ -519,6 +521,7 @@ describe('tarjeta de existencia', () => {
     e.voidSale(p.saleId!);
     const card = e.stockCard(B, AGUA, 'physical');
     expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de venta #${num}`, 40], [`Venta #${num}`, 38]]);
+    expect(card.rows.map((r) => r.saleId)).toEqual([p.saleId, p.saleId]); // la anulación también abre la boleta
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
     expect(e.stockCard(B, AGUA, 'physical', hoy, hoy).rows).toHaveLength(2);
     const futuro = e.stockCard(B, AGUA, 'physical', '2999-01-01');

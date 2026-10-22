@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { formatClp, type Channel, type Product, type StockCard } from '@nexus/core';
 import type { PosApi } from '../api';
-import { Modal } from '../components';
+import { Modal, Receipt, printReceipt } from '../components';
 import { fmtDate, fmtTime, printHtml, stockCardHtml } from '../format';
-import { msg } from '../hooks';
+import { msg, type SaleDetail } from '../hooks';
 
 type View = Channel | 'all';
 const VIEWS: [View, string][] = [['all', 'Total'], ['physical', 'Caja'], ['online', 'Online']];
@@ -15,6 +15,11 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
   const [to, setTo] = useState('');
   const [card, setCard] = useState<StockCard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sale, setSale] = useState<SaleDetail | null>(null);
+
+  const openSale = async (id: string) => {
+    try { setError(null); setSale(await api.rpc.getSale(id)); } catch (e) { setError(msg(e)); }
+  };
 
   useEffect(() => {
     setError(null);
@@ -22,6 +27,22 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
   }, [api, branchId, product.id, view, from, to]);
 
   const showChannel = view === 'all';
+
+  // La boleta se muestra en lugar de la tarjeta; al cerrarla se vuelve a la tarjeta con sus filtros.
+  if (sale) {
+    return (
+      <Modal title={`Boleta N° ${sale.document?.folio ?? '—'} · Venta #${sale.number}`} wide onClose={() => setSale(null)}>
+        <Receipt sale={sale} />
+        <ul className="items">{sale.lines.map((l) => <li key={l.productId}>{l.quantity} × {l.name} <b>{formatClp(l.unitPriceClp * l.quantity)}</b></li>)}</ul>
+        {sale.status === 'voided' && <div className="alert">Venta anulada{sale.voidReason ? `: ${sale.voidReason}` : ''}.</div>}
+        <div className="row-btns">
+          <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Reimprimir boleta</button>
+          <button className="btn primary" onClick={() => setSale(null)}>Volver a la tarjeta</button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal title={`📇 Tarjeta de existencia · ${product.name}`} wide onClose={onClose}>
       <p className="hint">SKU {product.sku} · Código {product.barcode}</p>
@@ -44,7 +65,8 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
             <tbody>
               {card.rows.map((r) => (
                 <tr key={r.id}>
-                  <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td><td>{r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : 'Online'}</td>}
+                  <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td>
+                  <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : 'Online'}</td>}
                   <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
                 </tr>
               ))}
