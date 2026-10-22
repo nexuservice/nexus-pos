@@ -102,7 +102,7 @@ export function stockCardHtml(card: StockCard, range: { from?: string; to?: stri
        <td class="n sep">${openingIsEntry && card.openingQty ? `${formatClp(card.openingValueClp)}${perUnit(card.openingValueClp, card.openingQty)}` : ''}</td><td class="n"></td><td class="n"><b>${formatClp(card.openingValueClp)}</b></td></tr>`
     : '';
   const rows = [...card.rows].reverse().map((r) =>
-    `<tr><td>${esc(fmtDate(r.at))}</td><td>${esc(r.detail)}${card.channel === 'all' && r.channel === 'online' ? ' <span class="muted">· Online</span>' : ''}</td>
+    `<tr><td>${esc(fmtDate(r.at))}</td><td>${esc(r.detail)}${r.type === 'sale' || r.type === 'purchase' ? `<br><span class="muted">Precio de venta ${formatClp(r.unitPriceNetClp)} neto · ${formatClp(r.unitPriceClp)} c/IVA</span>` : ''}${card.channel === 'all' && r.channel === 'online' ? ' <span class="muted">· Online</span>' : ''}</td>
      <td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td>
      <td class="n sep">${r.entryValueClp !== undefined ? `${money(r.entryValueClp)}${perUnit(r.entryValueClp, r.entry)}` : ''}</td>
      <td class="n">${r.exitValueClp !== undefined ? `${money(r.exitValueClp)}${perUnit(r.exitValueClp, r.exit)}` : ''}</td><td class="n"><b>${formatClp(r.balanceValueClp)}</b></td></tr>`).join('');
@@ -119,7 +119,7 @@ export function stockCardHtml(card: StockCard, range: { from?: string; to?: stri
     </thead>
     <tbody>${opening}${rows}
     <tr><td colspan="2"><b>Totales</b></td><td class="n"><b>${totalEntries}</b></td><td class="n"><b>${card.exits}</b></td><td class="n"><b>${card.closingQty}</b></td><td class="n sep"><b>${formatClp(totalEntryValue)}</b></td><td class="n"><b>${formatClp(card.exitValueClp)}</b></td><td class="n"><b>${formatClp(card.closingValueClp)}</b></td></tr></tbody></table>
-    <div class="muted" style="margin-top:6px">En orden cronológico, con el saldo corriendo hacia abajo. Entradas al costo; salidas por venta al precio de venta neto; consumos y anulaciones de compra al costo; el saldo valorizado es entradas menos salidas. Los traspasos no se valoran.</div>`;
+    <div class="muted" style="margin-top:6px">En orden cronológico, con el saldo corriendo hacia abajo. Los valores van todos al costo: entradas al costo de la entrada y salidas al costo promedio del saldo; el saldo valorizado queda en $0 cuando las unidades llegan a 0.</div>`;
 }
 
 export const CHANNEL_LABEL: Record<Ticket['channel'], string> = {

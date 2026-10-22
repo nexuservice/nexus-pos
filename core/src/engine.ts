@@ -292,23 +292,32 @@ export class PosEngine {
         };
       }
       const m = ev.move!;
-      balance += m.delta;
       // Los movimientos anteriores a esta función no traen precios anotados: se usan los vigentes.
-      const unitCostClp = m.unitCostClp ?? p.costClp;
+      const snapshotCost = m.unitCostClp ?? p.costClp;
       const unitPriceClp = m.unitPriceClp ?? p.priceClp;
       const unitPriceNetClp = splitIva(unitPriceClp).netClp;
       const qty = Math.abs(m.delta);
       const isPurchaseVoid = m.reason === 'return' && (this.state.purchases ?? []).some((x) => x.id === m.refId);
-      // Entradas al costo; salidas al precio de venta neto, salvo consumos y anulaciones de compra (al costo). Los traspasos no se valoran.
-      const valued = m.reason !== 'transfer';
-      const entryValueClp = valued && m.delta > 0 ? qty * unitCostClp : undefined;
-      const exitValueClp = valued && m.delta < 0 ? qty * (m.reason === 'consumption' || isPurchaseVoid ? unitCostClp : unitPriceNetClp) : undefined;
+
+      // Valores: todo al costo. Las entradas, al costo de ese movimiento. Las salidas, al costo promedio del saldo en ese
+      // momento (valor ÷ unidades), salvo la anulación de una compra, que devuelve lo que costó. Así el saldo valorizado
+      // siempre es unidades × costo y queda en $0 exactamente cuando las unidades llegan a 0.
+      let entryValueClp: number | undefined;
+      let exitValueClp: number | undefined;
+      if (m.delta > 0) {
+        entryValueClp = qty * snapshotCost;
+      } else {
+        const unit = isPurchaseVoid || balance <= 0 ? snapshotCost : value / balance;
+        exitValueClp = balance - qty === 0 ? value : Math.round(qty * unit);
+      }
+      balance += m.delta;
       value += (entryValueClp ?? 0) - (exitValueClp ?? 0);
+      const valueMoved = entryValueClp ?? exitValueClp ?? 0;
       return {
         id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m), dateOnly: m.reason === 'purchase' || undefined,
         saleId: (m.reason === 'sale' || m.reason === 'return') && this.state.sales.some((s) => s.id === m.refId) ? m.refId : undefined,
         entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance, balanceValueClp: value,
-        unitCostClp, unitPriceNetClp, unitPriceClp, entryValueClp, exitValueClp,
+        unitCostClp: qty > 0 ? Math.round(valueMoved / qty) : snapshotCost, unitPriceNetClp, unitPriceClp, entryValueClp, exitValueClp,
       };
     });
 

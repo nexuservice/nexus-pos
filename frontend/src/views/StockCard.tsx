@@ -71,7 +71,7 @@ function Ledger({ card, from, showChannel, onOpenSale }: { card: StockCard; from
           <tr><th rowSpan={2}>Fecha</th><th rowSpan={2}>Detalle</th><th colSpan={3} className="grp">Unidades</th><th colSpan={3} className="grp sep">Valores</th></tr>
           <tr>
             <th className="num">Entrada</th><th className="num">Salida</th><th className="num">Saldo</th>
-            <th className="num sep" title="Entradas al costo">Entrada</th><th className="num" title="Salidas al precio de venta neto (consumos, al costo)">Salida</th><th className="num">Saldo</th>
+            <th className="num sep" title="Entradas al costo">Entrada</th><th className="num" title="Salidas al costo promedio">Salida</th><th className="num" title="Unidades × costo: queda en $0 cuando las unidades llegan a 0">Saldo</th>
           </tr>
         </thead>
         <tbody>
@@ -89,6 +89,7 @@ function Ledger({ card, from, showChannel, onOpenSale }: { card: StockCard; from
               <td>{fmtDate(r.at)}</td>
               <td>
                 {r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => onOpenSale(r.saleId!)}>{r.detail}</button> : r.detail}
+                {(r.type === 'sale' || r.type === 'purchase') && <small>Precio de venta {formatClp(r.unitPriceNetClp)} neto · {formatClp(r.unitPriceClp)} c/IVA</small>}
                 {showChannel && r.channel === 'online' && <small>Online</small>}
               </td>
               <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
@@ -173,7 +174,7 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
           </div>
           <Ledger card={card} from={from} showChannel={showChannel} onOpenSale={openSale} />
           <p className="hint">
-            En orden cronológico: el saldo corre hacia abajo. Valores: las entradas van al costo; las salidas por venta, al precio de venta neto de ese día (consumos y anulaciones de compra, al costo); el saldo es entradas menos salidas. El inventario inicial se valora al costo que había antes del primer movimiento. Los traspasos no se valoran.
+            En orden cronológico: el saldo corre hacia abajo. Los valores van todos al costo: las entradas, al costo de esa entrada (el inventario inicial, al costo que había antes del primer movimiento), y las salidas, al costo promedio del saldo en ese momento. Por eso el saldo en valores es lo que queda en bodega y llega a $0 cuando las unidades llegan a 0. El precio de venta de cada boleta se muestra debajo del detalle.
             {showChannel && ' En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.'}
           </p>
         </>

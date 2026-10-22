@@ -323,13 +323,13 @@ export interface StockCardRow {
   exit: number;
   /** Existencia después de este movimiento. */
   balance: number;
-  /** Costo neto unitario y precio de venta unitario (neto y con IVA) vigentes en ese movimiento. */
+  /** Costo unitario con que se valoró este movimiento, y el precio de venta unitario (neto y con IVA) vigente entonces. */
   unitCostClp: number;
   unitPriceNetClp: number;
   unitPriceClp: number;
-  /** Cantidad × costo. Vacío en traspasos entre canales, que no se valoran. */
+  /** Cantidad × costo de esa entrada. */
   entryValueClp?: number;
-  /** Cantidad × precio de venta neto (consumos y anulaciones de compra, al costo). */
+  /** Cantidad × costo promedio del saldo en ese momento (la anulación de una compra, a lo que costó). Siempre al costo, nunca al precio de venta. */
   exitValueClp?: number;
   /** Saldo valorizado después de este movimiento: inventario inicial + valor de entradas − valor de salidas. */
   balanceValueClp: number;
@@ -347,7 +347,7 @@ export interface StockCard {
   closingValueClp: number;
   entries: number;
   exits: number;
-  /** Valor de las entradas del período (al costo) y de las salidas (al precio de venta neto; consumos al costo). */
+  /** Valor de las entradas y de las salidas del período, ambos al costo. */
   entryValueClp: number;
   exitValueClp: number;
   /** Cantidad reservada en carritos y pedidos abiertos (dentro de la existencia actual). */
