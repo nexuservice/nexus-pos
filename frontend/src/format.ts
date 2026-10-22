@@ -1,4 +1,4 @@
-import { PAY_METHOD_LABEL, formatClp, type ClientBalance, type StockCard, type Ticket } from '@nexus/core';
+import { PAY_METHOD_LABEL, formatClp, splitIva, type ClientBalance, type StockCard, type Ticket } from '@nexus/core';
 
 export function download(filename: string, content: string, mime: string): void {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -96,7 +96,7 @@ export function stockCardHtml(card: StockCard, range: { from?: string; to?: stri
   return `<h1>${esc(business)} · Tarjeta de existencia</h1>
     <div><b>${esc(card.product.name)}</b> · SKU ${esc(card.product.sku)} · Código ${esc(card.product.barcode)}</div>
     <div class="muted">${STOCK_CHANNEL_LABEL[card.channel]}${period} · Emitida ${esc(fmtDateTime(new Date().toISOString()))}</div>
-    <div class="muted">Existencia actual ${card.currentQty} · Costo unitario ${formatClp(card.product.costClp)} · Valor al costo ${formatClp(card.currentQty * card.product.costClp)}</div>
+    <div class="muted">Existencia actual ${card.currentQty} · Costo unitario ${formatClp(card.product.costClp)} · Precio neto de venta unitario ${formatClp(splitIva(card.product.priceClp).netClp)} (${formatClp(card.product.priceClp)} con IVA)</div>
     <table><thead><tr><th>Fecha</th><th>Detalle</th>${card.channel === 'all' ? '<th>Canal</th>' : ''}<th class="n">Entrada</th><th class="n">Salida</th><th class="n">Saldo</th></tr></thead>
     <tbody><tr><td colspan="${cols - 1}"><i>Saldo inicial</i></td><td class="n"><b>${card.openingQty}</b></td></tr>${rows}
     <tr><td colspan="${cols - 3}"><b>Totales</b></td><td class="n"><b>${card.entries}</b></td><td class="n"><b>${card.exits}</b></td><td class="n"><b>${card.closingQty}</b></td></tr></tbody></table>`;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatClp, type Channel, type Product, type StockCard } from '@nexus/core';
+import { formatClp, splitIva, type Channel, type Product, type StockCard } from '@nexus/core';
 import type { PosApi } from '../api';
 import { Modal, Receipt, printReceipt } from '../components';
 import { fmtDate, fmtTime, printHtml, stockCardHtml } from '../format';
@@ -58,7 +58,7 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
           <div className="kpis">
             <div className="kpi"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
             <div className="kpi"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
-            <div className="kpi"><span>Valor al costo</span><strong>{formatClp(card.currentQty * card.product.costClp)}</strong></div>
+            <div className="kpi"><span>Precio neto de venta (unitario)</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small></div>
           </div>
           <div className="table-wrap stock-card"><table>
             <thead><tr><th>Fecha</th><th>Detalle</th>{showChannel && <th>Canal</th>}<th className="num">Entrada</th><th className="num">Salida</th><th className="num">Saldo</th></tr></thead>
