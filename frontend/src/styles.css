@@ -102,6 +102,7 @@ main > * { flex: 1; }
 .stock-card td small { display: block; color: var(--muted); font-size: 11px; }
 .stock-card tfoot td { border-top: 2px solid var(--line); }
 .stock-card tr.opening td { color: var(--muted); }
+.stock-card tr.price-row td { background: color-mix(in srgb, var(--accent) 9%, transparent); font-style: italic; }
 .cart-head-actions { display: flex; gap: 6px; align-items: center; }
 .cart-lines { flex: 1; overflow-y: auto; padding: 4px 16px; min-height: 100px; }
 .empty { color: var(--muted); text-align: center; padding: 24px 0; }

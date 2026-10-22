@@ -561,6 +561,87 @@ describe('precios y valores en la tarjeta de existencia', () => {
   });
 });
 
+describe('corrección del precio de venta', () => {
+  const clock = () => {
+    let t = Date.parse('2026-10-20T15:00:00Z');
+    return { now: () => new Date(t), tick: () => { t += 60_000; } };
+  };
+  const mk = (c = clock()) => ({ c, e: make({ physical: 10, online: 0 }, { now: c.now }) });
+  const sell = async (e: PosEngine, qty: number, received: number) => {
+    const cart = e.createCart(B, 'physical'); e.cartAdd(cart.id, COLA, qty);
+    return payCart(e, fast(), { cartId: cart.id, method: 'cash', receivedClp: received });
+  };
+
+  it('el precio nuevo rige desde ahora y las ventas ya hechas conservan el suyo', async () => {
+    const { c, e } = mk();
+    const s1 = await sell(e, 2, 6000); c.tick();
+    const p = e.setProductPrice(COLA, 1000, '  error al digitar ');
+    expect(p.priceClp).toBe(1190); // $1.000 neto + IVA
+    c.tick();
+    const s2 = await sell(e, 1, 2000);
+    expect(e.getSale(s1.saleId!)).toMatchObject({ totalClp: 3980, netClp: 3345, lines: [expect.objectContaining({ unitPriceClp: 1990 })] });
+    expect(e.getSale(s2.saleId!)).toMatchObject({ totalClp: 1190, lines: [expect.objectContaining({ unitPriceClp: 1190 })] });
+
+    const card = e.stockCard(B, COLA, 'physical');
+    expect(card.rows.map((r) => [r.type, r.entry, r.exit, r.balance, r.unitPriceClp, r.exitValueClp])).toEqual([
+      ['sale', 0, 1, 7, 1190, 1000],
+      ['price', 0, 0, 8, 1190, undefined],
+      ['sale', 0, 2, 8, 1990, 3344], // la venta anterior se sigue valorando al precio de entonces
+    ]);
+    expect(card.rows[1]).toMatchObject({
+      channel: null, detail: 'Cambio de precio · $1.672 → $1.000 neto ($1.990 → $1.190 con IVA) · error al digitar', unitPriceNetClp: 1000,
+    });
+    expect(card).toMatchObject({ entries: 0, exits: 3, exitValueClp: 4344, closingQty: 7 });
+    expect(e.stockCard(B, COLA, 'all').rows.map((r) => r.type)).toEqual(['sale', 'price', 'sale']);
+  });
+
+  it('actualiza los carritos abiertos, pero no los pedidos retenidos', () => {
+    const { e } = mk();
+    const open = e.createCart(B, 'physical'); e.cartAdd(open.id, COLA, 2);
+    const held = e.createCart(B, 'physical'); e.cartAdd(held.id, COLA, 1);
+    e.holdCart(held.id, { customerName: 'Pedro', channel: 'phone' });
+    e.setProductPrice(COLA, 1000);
+    expect(e.getCart(open.id)).toMatchObject({ subtotalClp: 2380, totalClp: 2380 });
+    expect(e.getCart(open.id).lines[0]!.unitPriceClp).toBe(1190);
+    expect(e.getCart(held.id)).toMatchObject({ status: 'held', totalClp: 1990 });
+  });
+
+  it('valida el precio y no acepta dejar el mismo', () => {
+    const { e } = mk();
+    expect(() => e.setProductPrice(COLA, -1)).toThrow(/entero/);
+    expect(() => e.setProductPrice(COLA, 10.5)).toThrow(/entero/);
+    expect(() => e.setProductPrice(COLA, 1672)).toThrow(/ya es ese/); // 1.672 neto = $1.990 actual
+    expect(() => e.setProductPrice('nope', 1000)).toThrow(PosError);
+    expect(e.stockCard(B, COLA).rows).toEqual([]);
+  });
+
+  it('editar el precio desde el producto también queda anotado; dejarlo igual no', () => {
+    const { c, e } = mk();
+    const same = { id: COLA, name: 'Bebida cola 1,5 L', priceClp: 1990, costClp: 1294 };
+    e.upsertProduct(same);
+    expect(e.stockCard(B, COLA).rows).toHaveLength(0);
+    c.tick();
+    e.upsertProduct({ ...same, priceClp: 2200 });
+    expect(e.stockCard(B, COLA).rows[0]).toMatchObject({ type: 'price', unitPriceClp: 2200, detail: expect.stringContaining('Edición del producto') });
+  });
+
+  it('una compra con precio nuevo actualiza los carritos abiertos y no duplica el aviso en la tarjeta', () => {
+    const { e } = mk();
+    const open = e.createCart(B, 'physical'); e.cartAdd(open.id, COLA, 1);
+    e.registerPurchase({ branchId: B, supplierName: 'Sur', docNumber: '1', docDate: '2026-10-20', lines: [{ productId: COLA, quantity: 5, unitCostClp: 1000, priceNetClp: 1800 }] });
+    expect(e.getCart(open.id).totalClp).toBe(2142);
+    expect(e.stockCard(B, COLA).rows.map((r) => r.type)).toEqual(['purchase']);
+  });
+
+  it('una base guardada antes de esta función sigue funcionando', () => {
+    const old = seedState();
+    delete (old as { priceChanges?: unknown }).priceChanges;
+    const e = new PosEngine(old);
+    expect(e.setProductPrice(COLA, 1000).priceClp).toBe(1190);
+    expect(e.stockCard(B, COLA).rows).toHaveLength(1);
+  });
+});
+
 describe('tarjeta de existencia', () => {
   it('lista entradas y salidas con su origen y el saldo después de cada movimiento', async () => {
     const e = make({ physical: 10, online: 4 });

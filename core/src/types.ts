@@ -176,6 +176,19 @@ export interface Sale {
   documentId: string | null;
 }
 
+/** Cambio del precio de venta de un producto (corrección o alza). Las ventas ya hechas conservan el precio al que se vendieron. */
+export interface PriceChange {
+  id: string;
+  productId: string;
+  at: string;
+  /** Precios con IVA, antes y después. */
+  oldPriceClp: number;
+  newPriceClp: number;
+  /** Costo del producto en ese momento. */
+  costClp: number;
+  reason?: string;
+}
+
 export const PURCHASE_DOC_TYPES = ['factura', 'boleta', 'guia'] as const;
 export type PurchaseDocType = (typeof PURCHASE_DOC_TYPES)[number];
 export const PURCHASE_DOC_LABEL: Record<PurchaseDocType, string> = { factura: 'Factura', boleta: 'Boleta', guia: 'Guía de despacho' };
@@ -294,8 +307,10 @@ export interface StockMovement {
 export interface StockCardRow {
   id: string;
   at: string;
-  channel: Channel;
-  type: StockMovement['reason'];
+  /** null en los cambios de precio, que no son de ningún canal. */
+  channel: Channel | null;
+  /** 'price' = cambio de precio (sin entrada ni salida). */
+  type: StockMovement['reason'] | 'price';
   /** Qué originó el movimiento (Venta #12, Consumo #3, Ajuste, Traspaso a Online…). */
   detail: string;
   /** Las compras se fechan con el día del documento, así que solo cuenta la fecha, no la hora. */
@@ -471,6 +486,8 @@ export interface EngineState {
   consumptions?: Consumption[];
   /** Compras a proveedores. Opcional: las bases guardadas antes de esta función no lo traen. */
   purchases?: Purchase[];
+  /** Historial de cambios de precio. Opcional: las bases guardadas antes de esta función no lo traen. */
+  priceChanges?: PriceChange[];
   nextFolio: number;
   lastFolio: number;
   saleSeq: number;

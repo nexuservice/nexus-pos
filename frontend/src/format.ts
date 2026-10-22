@@ -91,7 +91,7 @@ const STOCK_CHANNEL_LABEL = { all: 'Total (caja + online)', physical: 'Caja', on
 export function stockCardHtml(card: StockCard, range: { from?: string; to?: string } = {}, business = 'Nexus'): string {
   const money = (v: number | undefined) => (v === undefined ? '' : formatClp(v));
   const rows = [...card.rows].reverse().map((r) =>
-    `<tr><td>${esc(fmtDate(r.at))}${r.dateOnly ? '' : ` ${esc(fmtTime(r.at))}`}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : 'Online'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td><td class="n">${formatClp(r.unitCostClp)}</td><td class="n">${formatClp(r.unitPriceNetClp)}<br><span class="muted">${formatClp(r.unitPriceClp)} c/IVA</span></td><td class="n">${money(r.entryValueClp)}</td><td class="n">${money(r.exitValueClp)}</td></tr>`).join('');
+    `<tr><td>${esc(fmtDate(r.at))}${r.dateOnly ? '' : ` ${esc(fmtTime(r.at))}`}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : r.channel === 'online' ? 'Online' : '—'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td><td class="n">${formatClp(r.unitCostClp)}</td><td class="n">${formatClp(r.unitPriceNetClp)}<br><span class="muted">${formatClp(r.unitPriceClp)} c/IVA</span></td><td class="n">${money(r.entryValueClp)}</td><td class="n">${money(r.exitValueClp)}</td></tr>`).join('');
   const cols = card.channel === 'all' ? 6 : 5;
   const period = range.from || range.to ? ` · Período: ${esc(range.from ?? 'inicio')} a ${esc(range.to ?? 'hoy')}` : '';
   return `<h1>${esc(business)} · Tarjeta de existencia</h1>

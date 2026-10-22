@@ -1,10 +1,10 @@
 import type {
   AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, Emisor, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
-  Purchase, PurchaseInput, PurchaseLine, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
+  PriceChange, Purchase, PurchaseInput, PurchaseLine, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
 } from './types';
 import { PAY_METHODS, PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, isTerminalMethod } from './types';
-import { addIva, splitIva } from './money';
+import { addIva, formatClp, splitIva } from './money';
 import { isValidRut, normalizeRut } from './rut';
 import { buildBoletaXml } from './billing';
 import { buildSalesReport, santiagoDay } from './reports';
@@ -56,6 +56,7 @@ export class PosEngine {
     this.state.creditPayments ??= [];
     this.state.consumptions ??= [];
     this.state.purchases ??= [];
+    this.state.priceChanges ??= [];
     this.now = opts.now ?? (() => new Date());
     this.emisor = opts.emisor ?? DEFAULT_EMISOR;
     this.terminal = opts.terminal ?? 'CAJA1';
@@ -107,6 +108,28 @@ export class PosEngine {
     return santiagoDay(this.now().toISOString());
   }
 
+  /**
+   * Pone un precio de venta nuevo (con IVA). Los carritos abiertos se actualizan para no vender al precio viejo;
+   * las ventas ya cobradas, los pedidos retenidos y los movimientos de stock conservan el precio con que se hicieron.
+   */
+  private applyPrice(p: Product, newGrossClp: number): void {
+    p.priceClp = newGrossClp;
+    for (const cart of Object.values(this.state.carts)) {
+      if (cart.status !== 'open') continue;
+      let touched = false;
+      for (const l of cart.lines) if (l.productId === p.id) { l.unitPriceClp = newGrossClp; touched = true; }
+      if (touched) this.recompute(cart);
+    }
+  }
+
+  private recordPriceChange(p: Product, newGrossClp: number, reason?: string | null): void {
+    this.state.priceChanges!.push({
+      id: this.id('price'), productId: p.id, at: this.now().toISOString(), oldPriceClp: p.priceClp, newPriceClp: newGrossClp,
+      costClp: p.costClp, reason: reason?.trim() || undefined,
+    });
+    this.applyPrice(p, newGrossClp);
+  }
+
   // ---------- catálogo e inventario ----------
   branches(): Branch[] {
     return clone(this.state.branches);
@@ -138,6 +161,7 @@ export class PosEngine {
       throw new PosError('INVALID_DATA', 'Ya existe un producto con ese código de barras');
     }
     if (existing) {
+      if (input.priceClp !== existing.priceClp) this.recordPriceChange(existing, input.priceClp, 'Edición del producto');
       Object.assign(existing, { ...input, name, barcode, costClp: cost });
       return clone(existing);
     }
@@ -151,6 +175,20 @@ export class PosEngine {
       priceClp: input.priceClp, costClp: cost, published: input.published ?? true, active: input.active ?? true,
     };
     this.state.products.push(p);
+    return clone(p);
+  }
+
+  /**
+   * Corrige o sube el precio de venta de un producto digitando el NETO unitario (el sistema calcula el valor con IVA).
+   * Rige desde ahora: las ventas ya hechas no cambian. Queda anotado en la tarjeta de existencia.
+   */
+  setProductPrice(productId: string, priceNetClp: number, reason?: string | null): Product {
+    const p = this.state.products.find((x) => x.id === productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    if (!Number.isInteger(priceNetClp) || priceNetClp < 0) throw new PosError('INVALID_AMOUNT', 'El precio neto debe ser un entero de 0 o más');
+    const gross = addIva(priceNetClp);
+    if (gross === p.priceClp) throw new PosError('NOT_ALLOWED', 'El precio ya es ese');
+    this.recordPriceChange(p, gross, reason);
     return clone(p);
   }
 
@@ -226,8 +264,24 @@ export class PosEngine {
       }
     };
 
+    // Los cambios de precio se intercalan por fecha: no mueven stock, pero explican por qué cambian los precios entre filas.
+    const events: { at: string; move?: StockMovement; price?: PriceChange }[] = [
+      ...moves.map((m) => ({ at: m.at, move: m })),
+      ...(this.state.priceChanges ?? []).filter((c) => c.productId === p.id).map((c) => ({ at: c.at, price: c })),
+    ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
     let balance = currentQty - moves.reduce((n, m) => n + m.delta, 0);
-    const all: StockCardRow[] = moves.map((m) => {
+    const all: StockCardRow[] = events.map((ev) => {
+      if (ev.price) {
+        const c = ev.price;
+        const net = (g: number) => formatClp(splitIva(g).netClp);
+        return {
+          id: c.id, at: c.at, channel: null, type: 'price', balance, entry: 0, exit: 0,
+          detail: `Cambio de precio · ${net(c.oldPriceClp)} → ${net(c.newPriceClp)} neto (${formatClp(c.oldPriceClp)} → ${formatClp(c.newPriceClp)} con IVA)${c.reason ? ` · ${c.reason}` : ''}`,
+          unitCostClp: c.costClp, unitPriceNetClp: splitIva(c.newPriceClp).netClp, unitPriceClp: c.newPriceClp,
+        };
+      }
+      const m = ev.move!;
       balance += m.delta;
       // Los movimientos anteriores a esta función no traen precios anotados: se usan los vigentes.
       const unitCostClp = m.unitCostClp ?? p.costClp;
@@ -780,7 +834,7 @@ export class PosEngine {
       const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : undefined;
       const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, priceClp: newPrice ?? l.newProduct!.priceClp!, costClp: l.unitCostClp }).id;
       const product = this.state.products.find((p) => p.id === productId)!;
-      if (l.productId && newPrice !== undefined) product.priceClp = newPrice; // el precio sube con la inflación: el nuevo rige desde esta compra
+      if (l.productId && newPrice !== undefined) this.applyPrice(product, newPrice); // el precio sube con la inflación: el nuevo rige desde esta compra
       if (input.updateCost !== false) {
         const before = Math.max(0, this.totalQty(productId));
         product.costClp = before > 0 ? Math.round((before * product.costClp + l.quantity * l.unitCostClp) / (before + l.quantity)) : l.unitCostClp;

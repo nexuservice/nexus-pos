@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatClp, splitIva, type Channel, type Product, type StockCard } from '@nexus/core';
+import { addIva, formatClp, splitIva, type Channel, type Product, type StockCard } from '@nexus/core';
 import type { PosApi } from '../api';
 import { Modal, Receipt, printReceipt } from '../components';
 import { fmtDate, fmtTime, printHtml, stockCardHtml } from '../format';
@@ -8,14 +8,63 @@ import { msg, type SaleDetail } from '../hooks';
 type View = Channel | 'all';
 const VIEWS: [View, string][] = [['all', 'Total'], ['physical', 'Caja'], ['online', 'Online']];
 
+/**
+ * Corrige o sube el precio de venta de un producto digitando el neto. Rige desde ahora: las ventas ya hechas
+ * conservan el precio al que se vendieron.
+ */
+export function PriceModal({ api, product, onClose, onSaved }: { api: PosApi; product: Product; onClose: () => void; onSaved: () => void }) {
+  const currentNet = splitIva(product.priceClp).netClp;
+  const [net, setNet] = useState(String(currentNet));
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const value = Number(net.replace(/\D/g, '')) || 0;
+  const gross = addIva(value);
+
+  const save = async () => {
+    try {
+      setBusy(true); setError(null);
+      await api.rpc.setProductPrice(product.id, value, reason);
+      onSaved();
+      onClose();
+    } catch (e) { setError(msg(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={`✏️ Editar precio · ${product.name}`} onClose={onClose}>
+      <p className="hint">Rige desde ahora. Las ventas ya hechas <b>no cambian</b>: conservan el precio al que se vendieron.</p>
+      <div className="receipt">
+        <div><span>Precio actual neto</span><strong>{formatClp(currentNet)}</strong></div>
+        <div><span>Con IVA</span><span>{formatClp(product.priceClp)}</span></div>
+        <div><span>Costo unitario</span><span>{formatClp(product.costClp)}</span></div>
+      </div>
+      <label className="field">Nuevo precio de venta neto unitario
+        <input inputMode="numeric" autoFocus value={net} onChange={(e) => setNet(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
+      </label>
+      <div className="receipt"><div className="big"><span>Nuevo precio con IVA</span><strong>{formatClp(gross)}</strong></div></div>
+      {value < product.costClp && <div className="alert" role="alert">El precio neto queda bajo el costo ({formatClp(product.costClp)}): venderías con pérdida.</div>}
+      <label className="field">Motivo (opcional)
+        <input placeholder="Ej: error al digitar la compra" value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
+      </label>
+      {error && <div className="alert" role="alert">{error}</div>}
+      <div className="row-btns">
+        <button className="btn ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn primary" disabled={busy || gross === product.priceClp} onClick={save}>Guardar precio</button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Tarjeta de existencia (kardex) de un producto: entradas, salidas y saldo después de cada movimiento. */
-export function StockCardModal({ api, branchId, product, onClose }: { api: PosApi; branchId: string; product: Product; onClose: () => void }) {
+export function StockCardModal({ api, branchId, product, onClose, onChanged }: { api: PosApi; branchId: string; product: Product; onClose: () => void; onChanged?: () => void }) {
   const [view, setView] = useState<View>('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [card, setCard] = useState<StockCard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sale, setSale] = useState<SaleDetail | null>(null);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [version, setVersion] = useState(0);
 
   const openSale = async (id: string) => {
     try { setError(null); setSale(await api.rpc.getSale(id)); } catch (e) { setError(msg(e)); }
@@ -24,9 +73,14 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
   useEffect(() => {
     setError(null);
     api.rpc.stockCard(branchId, product.id, view, from || null, to || null).then(setCard).catch((e) => setError(msg(e)));
-  }, [api, branchId, product.id, view, from, to]);
+  }, [api, branchId, product.id, view, from, to, version]);
 
   const showChannel = view === 'all';
+
+  // El editor de precio se muestra en lugar de la tarjeta; al cerrarlo se vuelve a la tarjeta con sus filtros.
+  if (editingPrice && card) {
+    return <PriceModal api={api} product={card.product} onClose={() => setEditingPrice(false)} onSaved={() => { setVersion((v) => v + 1); onChanged?.(); }} />;
+  }
 
   // La boleta se muestra en lugar de la tarjeta; al cerrarla se vuelve a la tarjeta con sus filtros.
   if (sale) {
@@ -58,7 +112,8 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
           <div className="kpis">
             <div className="kpi"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
             <div className="kpi"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
-            <div className="kpi"><span>Precio neto de venta (unitario)</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small></div>
+            <div className="kpi"><span>Precio neto de venta (unitario)</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small>
+              <button className="btn ghost sm" onClick={() => setEditingPrice(true)}>✏️ Editar precio</button></div>
           </div>
           <div className="table-wrap stock-card"><table>
             <thead><tr>
@@ -71,9 +126,9 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
             </tr></thead>
             <tbody>
               {card.rows.map((r) => (
-                <tr key={r.id}>
+                <tr key={r.id} className={r.type === 'price' ? 'price-row' : ''}>
                   <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td>
-                  <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : 'Online'}</td>}
+                  <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : r.channel === 'online' ? 'Online' : '—'}</td>}
                   <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
                   <td className="num">{formatClp(r.unitCostClp)}</td>
                   <td className="num">{formatClp(r.unitPriceNetClp)}<small>{formatClp(r.unitPriceClp)} c/IVA</small></td>

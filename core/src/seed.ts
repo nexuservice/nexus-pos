@@ -63,7 +63,7 @@ export function seedState(opts: { physical?: number; online?: number; folioFrom?
     promotions: structuredClone(SEED_PROMOTIONS),
     shifts: [], tickets: [],
     stock,
-    carts: {}, payments: {}, sales: [], documents: [], movements: [], creditPayments: [], consumptions: [], purchases: [],
+    carts: {}, payments: {}, sales: [], documents: [], movements: [], creditPayments: [], consumptions: [], purchases: [], priceChanges: [],
     nextFolio: opts.folioFrom ?? 1,
     lastFolio: opts.folioTo ?? 500,
     saleSeq: 0, ticketSeq: 0, seq: 0,
