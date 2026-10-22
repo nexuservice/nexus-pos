@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PosEngine, PosError, SimulatedGateway, payCart, seedState, splitIva, isValidRut, normalizeRut,
+  PosEngine, PosError, SimulatedGateway, payCart, seedState, splitIva, addIva, isValidRut, normalizeRut,
   buildBoletaXml, parseBoletaXml, DEFAULT_EMISOR, RPC_METHODS, normalizePhone, whatsappUrl, whatsappMessage, formatClp,
 } from '../src';
 
@@ -474,6 +474,90 @@ describe('compras a proveedores', () => {
     const e = new PosEngine(old, { now: NOW });
     expect(e.listPurchases()).toEqual([]);
     expect(e.registerPurchase({ ...base, lines: [{ productId: COLA, quantity: 1, unitCostClp: 1 }] }).number).toBe(1);
+  });
+});
+
+describe('precios y valores en la tarjeta de existencia', () => {
+  const NOW = () => new Date('2026-10-20T15:00:00Z');
+  const base = { branchId: B, supplierName: 'Distribuidora Sur', docDate: '2026-10-20' };
+  const mk = () => make({ physical: 10, online: 0 }, { now: NOW });
+  const sell = async (e: PosEngine, productId: string, qty: number, received: number) => {
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, productId, qty);
+    return payCart(e, fast(), { cartId: c.id, method: 'cash', receivedClp: received });
+  };
+
+  it('addIva es el inverso de splitIva', () => {
+    expect(addIva(1000)).toBe(1190);
+    expect(addIva(1672)).toBe(1990);
+    for (const net of [0, 1, 840, 1672, 99_999]) expect(splitIva(addIva(net)).netClp).toBe(net);
+  });
+
+  it('al comprar se digita el precio neto nuevo y el sistema calcula el valor con IVA', () => {
+    const e = mk();
+    e.registerPurchase({
+      ...base, docNumber: '1',
+      lines: [
+        { productId: COLA, quantity: 5, unitCostClp: 1000, priceNetClp: 1800 },
+        { productId: AGUA, quantity: 5, unitCostClp: 500 },
+        { newProduct: { name: 'Té' }, quantity: 3, unitCostClp: 1500, priceNetClp: 2000 },
+      ],
+    });
+    const price = (id: string) => e.listProducts().find((x) => x.id === id)!.priceClp;
+    expect(price(COLA)).toBe(2142); // 1.800 + IVA
+    expect(price(AGUA)).toBe(990); // sin precio nuevo, no cambia
+    expect(e.listProducts().find((x) => x.name === 'Té')!.priceClp).toBe(2380);
+    expect(e.listPurchases()[0]!.lines.map((l) => [l.priceNetClp, l.priceClp])).toEqual([[1800, 2142], [832, 990], [2000, 2380]]);
+    const buy = (over: object) => () => e.registerPurchase({ ...base, docNumber: '2', lines: [{ productId: COLA, quantity: 1, unitCostClp: 1 }], ...over });
+    expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 1, priceNetClp: -5 }] })).toThrow(/precio de venta neto/);
+    expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 1, priceNetClp: 10.5 }] })).toThrow(/precio de venta neto/);
+    expect(buy({ lines: [{ newProduct: { name: 'Sin precio' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/precio de venta neto del producto nuevo/);
+  });
+
+  it('con la inflación, cada movimiento guarda su costo y precio, y se valora: entradas al costo, salidas al precio neto', async () => {
+    const e = mk();
+    await sell(e, COLA, 2, 6000); // precio $1.990 (neto $1.672), costo $1.294
+    e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000, priceNetClp: 1800 }] });
+    await sell(e, COLA, 1, 3000); // ahora $2.142 (neto $1.800)
+    const card = e.stockCard(B, COLA, 'physical');
+    const pick = (r: (typeof card.rows)[number]) => [r.detail.split(' ')[0], r.unitCostClp, r.unitPriceNetClp, r.unitPriceClp, r.entryValueClp, r.exitValueClp];
+    expect(card.rows.map(pick)).toEqual([
+      ['Venta', 1084, 1800, 2142, undefined, 1800],
+      ['Compra', 1000, 1800, 2142, 20_000, undefined],
+      ['Venta', 1294, 1672, 1990, undefined, 3344],
+    ]);
+    expect(card).toMatchObject({ entryValueClp: 20_000, exitValueClp: 5144, entries: 20, exits: 3 });
+    expect(e.stockCard(B, COLA, 'all', '2999-01-01')).toMatchObject({ entryValueClp: 0, exitValueClp: 0 });
+  });
+
+  it('consumos y anulaciones de compra salen al costo; ajustes siguen la regla; los traspasos no se valoran', () => {
+    const e = mk();
+    const k = e.createCart(B, 'physical'); e.cartAdd(k.id, COLA, 2);
+    e.registerConsumption(k.id);
+    e.adjustStock(B, COLA, 'physical', 3);
+    e.adjustStock(B, COLA, 'physical', -1);
+    e.moveStock(B, COLA, 'physical', 'online', 1);
+    const p = e.registerPurchase({ ...base, docNumber: '9', lines: [{ productId: COLA, quantity: 5, unitCostClp: 1000, priceNetClp: 1800 }] });
+    e.voidPurchase(p.id);
+    const rows = e.stockCard(B, COLA, 'physical').rows.reverse();
+    const v = (r: (typeof rows)[number]) => [r.type, r.entryValueClp, r.exitValueClp];
+    expect(rows.map(v)).toEqual([
+      ['consumption', undefined, 2 * 1294], // al costo
+      ['adjustment', 3 * 1294, undefined], // entrada al costo
+      ['adjustment', undefined, 1672], // salida al precio neto de venta
+      ['transfer', undefined, undefined], // sin valor
+      ['purchase', 5000, undefined],
+      ['return', undefined, 5000], // la anulación de la compra sale al costo de esa compra
+    ]);
+    expect(rows[5]).toMatchObject({ detail: 'Anulación de compra · Factura N° 9', unitCostClp: 1000 });
+  });
+
+  it('una base con movimientos sin precios anotados se valora con el costo y precio vigentes', () => {
+    const e = mk();
+    e.adjustStock(B, COLA, 'physical', 4);
+    const snap = e.snapshot();
+    snap.movements.forEach((m) => { delete m.unitCostClp; delete m.unitPriceClp; });
+    const old = new PosEngine(snap, { now: NOW });
+    expect(old.stockCard(B, COLA, 'physical').rows[0]).toMatchObject({ unitCostClp: 1294, unitPriceClp: 1990, unitPriceNetClp: 1672, entryValueClp: 4 * 1294 });
   });
 });
 

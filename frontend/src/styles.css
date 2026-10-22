@@ -85,14 +85,21 @@ main > * { flex: 1; }
 .purchase-lines { display: grid; gap: 10px; }
 .purchase-line { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 8px; background: var(--bg); }
 .purchase-line .row { display: grid; grid-template-columns: minmax(0, 2fr) 90px 130px 110px 32px; gap: 8px; align-items: end; }
-.purchase-line .row.new { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.purchase-line .row.new { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.purchase-line .row.price { grid-template-columns: 230px 170px minmax(0, 1fr); }
+.price-iva { padding: 10px 0; font-size: 14px; }
 .line-total-box { font-weight: 700; text-align: right; padding: 10px 0; }
 .purchase-totals { display: flex; gap: 18px; justify-content: flex-end; flex-wrap: wrap; font-size: 14px; }
-@media (max-width: 720px) { .purchase-line .row, .purchase-line .row.new { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { .purchase-line .row, .purchase-line .row.new, .purchase-line .row.price { grid-template-columns: 1fr 1fr; } }
 .link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--brand); font-weight: 600; cursor: pointer; text-align: left; }
 .link-btn:hover { text-decoration: underline; }
 .stock-card { max-height: 50vh; overflow: auto; }
+.stock-card table { font-size: 13px; }
+.stock-card th, .stock-card td { padding-left: 8px; padding-right: 8px; }
 .stock-card th.num, .stock-card td.num { text-align: right; }
+.stock-card td.num { white-space: nowrap; }
+.stock-card th.num { white-space: normal; line-height: 1.2; }
+.stock-card td small { display: block; color: var(--muted); font-size: 11px; }
 .stock-card tfoot td { border-top: 2px solid var(--line); }
 .stock-card tr.opening td { color: var(--muted); }
 .cart-head-actions { display: flex; gap: 6px; align-items: center; }
@@ -205,6 +212,7 @@ tr.voided td { opacity: .55; text-decoration: line-through; } tr.voided td:last-
 .modal-back { position: fixed; inset: 0; background: rgba(10, 12, 24, .55); display: grid; place-items: center; padding: 16px; z-index: 50; overflow-y: auto; }
 .modal { background: var(--surface); border-radius: 18px; padding: 24px; width: min(440px, 100%); display: flex; flex-direction: column; gap: 12px; max-height: calc(100dvh - 32px); overflow-y: auto; }
 .modal.wide { width: min(900px, 100%); }
+.modal.xwide { width: min(1240px, 100%); }
 .modal-title { font-size: 20px; } .modal h3 { font-size: 20px; text-align: center; } .modal-title { text-align: left !important; }
 .modal p { margin: 0; color: var(--muted); }
 .spinner { width: 48px; height: 48px; border: 5px solid var(--line); border-top-color: var(--brand); border-radius: 50%; margin: 0 auto; animation: spin 1s linear infinite; }

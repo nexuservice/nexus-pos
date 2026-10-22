@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, formatClp,
+  PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, addIva, formatClp, splitIva,
   type InventoryRow, type Product, type Purchase, type PurchaseDocType, type PurchaseInput,
 } from '@nexus/core';
 import type { PosApi } from '../api';
@@ -20,6 +20,7 @@ interface Line {
   cost: string;
   name: string;
   category: string;
+  /** Precio de venta NETO unitario nuevo; el valor con IVA se calcula. Vacío = no cambia el precio de un producto existente. */
   price: string;
   barcode: string;
 }
@@ -67,12 +68,17 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
       setBusy(true); setError(null);
       const input: PurchaseInput = {
         branchId, supplierName, supplierRut: supplierRut.trim() || undefined, docType, docNumber, docDate, note: note.trim() || undefined, updateCost,
-        lines: lines.map((l) => (l.productId === NEW
-          ? { newProduct: { name: l.name, category: l.category || undefined, barcode: l.barcode.trim() || undefined, priceClp: num(l.price) }, quantity: num(l.qty), unitCostClp: num(l.cost) }
-          : { productId: l.productId || undefined, quantity: num(l.qty), unitCostClp: num(l.cost) })),
+        lines: lines.map((l) => {
+          const priceNetClp = l.price.trim() ? num(l.price) : undefined;
+          return l.productId === NEW
+            ? { newProduct: { name: l.name, category: l.category || undefined, barcode: l.barcode.trim() || undefined }, quantity: num(l.qty), unitCostClp: num(l.cost), priceNetClp }
+            : { productId: l.productId || undefined, quantity: num(l.qty), unitCostClp: num(l.cost), priceNetClp };
+        }),
       };
       const missing = lines.findIndex((l) => !l.productId);
       if (missing >= 0) throw new Error(`Línea ${missing + 1}: elige un producto o crea uno nuevo`);
+      const noPrice = lines.findIndex((l) => l.productId === NEW && !l.price.trim());
+      if (noPrice >= 0) throw new Error(`Línea ${noPrice + 1}: indica el precio de venta neto del producto nuevo`);
       setDone(await api.rpc.registerPurchase(input));
       onSaved();
     } catch (e) { setError(msg(e)); } finally { setBusy(false); }
@@ -133,13 +139,25 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
                 <div className="line-total-box">{formatClp(num(l.qty) * num(l.cost))}</div>
                 <button className="x" aria-label={`Quitar línea ${i + 1}`} disabled={lines.length === 1} onClick={() => removeLine(l.key)}>✕</button>
               </div>
-              {existing && <small className="hint">Costo actual {formatClp(existing.costClp)} · existencia {stock[existing.id] ?? 0}</small>}
+              {existing && <small className="hint">Costo actual {formatClp(existing.costClp)} · precio actual {formatClp(splitIva(existing.priceClp).netClp)} neto ({formatClp(existing.priceClp)} con IVA) · existencia {stock[existing.id] ?? 0}</small>}
               {l.productId === NEW && (
                 <div className="row new">
                   <label className="field">Nombre *<input placeholder="Nombre del producto" value={l.name} onChange={(e) => setLine(l.key, { name: e.target.value })} /></label>
                   <label className="field">Categoría<input placeholder="General" value={l.category} onChange={(e) => setLine(l.key, { category: e.target.value })} /></label>
-                  <label className="field">Precio de venta (IVA incl.) *<input inputMode="numeric" placeholder="$0" value={l.price} onChange={(e) => setLine(l.key, { price: e.target.value })} /></label>
                   <label className="field">Código de barras<input placeholder="Opcional" value={l.barcode} onChange={(e) => setLine(l.key, { barcode: e.target.value })} /></label>
+                </div>
+              )}
+              {l.productId && (
+                <div className="row price">
+                  <label className="field">Precio venta neto unitario{l.productId === NEW ? ' *' : ' (nuevo)'}
+                    <input inputMode="numeric" placeholder={existing ? String(splitIva(existing.priceClp).netClp) : '$0'} value={l.price} onChange={(e) => setLine(l.key, { price: e.target.value })} />
+                  </label>
+                  <div className="price-iva">
+                    {l.price.trim()
+                      ? <><b>{formatClp(addIva(num(l.price)))}</b> con IVA</>
+                      : existing ? <><b>{formatClp(existing.priceClp)}</b> con IVA (sin cambio)</> : <span className="hint">Se calcula con IVA</span>}
+                  </div>
+                  <small className="hint">{l.productId === NEW ? 'Este será el precio de venta del producto.' : 'Déjalo vacío para mantener el precio. Si lo cambias, rige desde esta compra.'}</small>
                 </div>
               )}
             </div>
@@ -218,12 +236,15 @@ export function PurchasesSection({ api, branchId }: { api: PosApi; branchId: str
             {detail.note && <div><dt>Observación</dt><dd>{detail.note}</dd></div>}
           </dl>
           <div className="table-wrap"><table>
-            <thead><tr><th>Producto</th><th>Cantidad</th><th>Costo unit. neto</th><th>Total</th></tr></thead>
-            <tbody>{detail.lines.map((l, i) => <tr key={i}><td>{l.name}</td><td>{l.quantity}</td><td>{formatClp(l.unitCostClp)}</td><td>{formatClp(l.totalClp)}</td></tr>)}</tbody>
+            <thead><tr><th>Producto</th><th>Cantidad</th><th>Costo unit. neto</th><th>Precio venta neto unit.</th><th>Total</th></tr></thead>
+            <tbody>{detail.lines.map((l, i) => (
+              <tr key={i}><td>{l.name}</td><td>{l.quantity}</td><td>{formatClp(l.unitCostClp)}</td>
+                <td>{l.priceNetClp !== undefined ? <>{formatClp(l.priceNetClp)}<br /><small>{formatClp(l.priceClp ?? 0)} con IVA</small></> : '—'}</td><td>{formatClp(l.totalClp)}</td></tr>
+            ))}</tbody>
             <tfoot>
-              <tr><td colSpan={3}>Neto</td><td>{formatClp(detail.netClp)}</td></tr>
-              <tr><td colSpan={3}>IVA 19%</td><td>{formatClp(detail.ivaClp)}</td></tr>
-              <tr><td colSpan={3}><b>Total</b></td><td><b>{formatClp(detail.totalClp)}</b></td></tr>
+              <tr><td colSpan={4}>Neto</td><td>{formatClp(detail.netClp)}</td></tr>
+              <tr><td colSpan={4}>IVA 19%</td><td>{formatClp(detail.ivaClp)}</td></tr>
+              <tr><td colSpan={4}><b>Total</b></td><td><b>{formatClp(detail.totalClp)}</b></td></tr>
             </tfoot>
           </table></div>
           {detail.status === 'voided' && <div className="alert">Compra anulada{detail.voidReason ? `: ${detail.voidReason}` : ''}. Las unidades salieron del inventario.</div>}

@@ -187,6 +187,9 @@ export interface PurchaseLine {
   /** Costo unitario neto (sin IVA), tal como viene en la factura. */
   unitCostClp: number;
   totalClp: number;
+  /** Precio de venta unitario del producto después de esta compra (neto y con IVA). */
+  priceNetClp?: number;
+  priceClp?: number;
 }
 
 /**
@@ -218,9 +221,13 @@ export interface Purchase {
 /** Línea de una compra por registrar: un producto existente o uno nuevo que se crea con la compra. */
 export interface PurchaseLineInput {
   productId?: string;
-  newProduct?: { name: string; category?: string; sku?: string; barcode?: string; priceClp: number; published?: boolean };
+  /** Si no trae priceClp (con IVA), el precio sale de priceNetClp de la línea. */
+  newProduct?: { name: string; category?: string; sku?: string; barcode?: string; priceClp?: number; published?: boolean };
   quantity: number;
+  /** Costo unitario neto de la factura. */
   unitCostClp: number;
+  /** Precio de venta neto unitario nuevo (el sistema calcula el valor con IVA). Si se omite, el precio de un producto existente no cambia. */
+  priceNetClp?: number;
 }
 
 export interface PurchaseInput {
@@ -277,6 +284,9 @@ export interface StockMovement {
   delta: number;
   reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption' | 'purchase';
   refId?: string;
+  /** Costo neto unitario y precio de venta unitario (con IVA) vigentes en ese movimiento: con la inflación van cambiando. */
+  unitCostClp?: number;
+  unitPriceClp?: number;
   at: string;
 }
 
@@ -296,6 +306,14 @@ export interface StockCardRow {
   exit: number;
   /** Existencia después de este movimiento. */
   balance: number;
+  /** Costo neto unitario y precio de venta unitario (neto y con IVA) vigentes en ese movimiento. */
+  unitCostClp: number;
+  unitPriceNetClp: number;
+  unitPriceClp: number;
+  /** Cantidad × costo. Vacío en traspasos entre canales, que no se valoran. */
+  entryValueClp?: number;
+  /** Cantidad × precio de venta neto (consumos y anulaciones de compra, al costo). */
+  exitValueClp?: number;
 }
 
 /** Tarjeta de existencia (kardex) de un producto. Las filas van de la más nueva a la más antigua. */
@@ -306,6 +324,9 @@ export interface StockCard {
   closingQty: number;
   entries: number;
   exits: number;
+  /** Valor de las entradas del período (al costo) y de las salidas (al precio de venta neto; consumos al costo). */
+  entryValueClp: number;
+  exitValueClp: number;
   /** Cantidad reservada en carritos y pedidos abiertos (dentro de la existencia actual). */
   reservedQty: number;
   /** Existencia actual del producto en el canal consultado. */

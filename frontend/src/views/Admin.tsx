@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  PAY_METHODS, PAY_METHOD_LABEL, formatClp,
+  PAY_METHODS, PAY_METHOD_LABEL, formatClp, splitIva,
   type Cashier, type ClientWithDebt, type InventoryRow, type Product, type Promotion, type Shift,
 } from '@nexus/core';
 import type { PosApi } from '../api';
@@ -79,7 +79,8 @@ function Products({ api, branchId }: { api: PosApi; branchId: string | null }) {
             <label className="field">Categoría<input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></label>
             <label className="field">SKU<input value={f.sku} onChange={(e) => setF({ ...f, sku: e.target.value })} /></label>
             <label className="field">Código de barras<input value={f.barcode} onChange={(e) => setF({ ...f, barcode: e.target.value })} /></label>
-            <label className="field">Precio (CLP, IVA incl.)<input inputMode="numeric" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} /></label>
+            <label className="field">Precio (CLP, IVA incl.)<input inputMode="numeric" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} />
+              <small>Neto {formatClp(splitIva(Number(f.price) || 0).netClp)} · para subir precios con una compra, digita el neto en «Nueva compra»</small></label>
             <label className="field">Costo (CLP)<input inputMode="numeric" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} /></label>
             <label className="check"><input type="checkbox" checked={f.published} onChange={(e) => setF({ ...f, published: e.target.checked })} /> Visible en tienda online</label>
             <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Activo</label>

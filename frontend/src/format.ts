@@ -37,7 +37,7 @@ export function fmtDuration(ms: number): string {
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 const TICKET_CSS = 'body{font:13px monospace;width:72mm;margin:4mm}h1{font-size:16px;margin:0 0 6px}hr{border:0;border-top:1px dashed #000}.r{display:flex;justify-content:space-between}';
-const SHEET_CSS = 'body{font:12px Arial,sans-serif;margin:12mm}h1{font-size:18px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border-bottom:1px solid #aaa;padding:4px 6px;text-align:left}th{background:#eee}.n{text-align:right}.muted{color:#555}';
+const SHEET_CSS = '@page{size:landscape}body{font:11px Arial,sans-serif;margin:10mm}h1{font-size:18px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border-bottom:1px solid #aaa;padding:4px 6px;text-align:left}th{background:#eee}.n{text-align:right}.muted{color:#555}';
 
 /** Imprime HTML en un iframe oculto: ticket de 72 mm (comanda, boleta) u hoja completa (tablas). */
 export function printHtml(html: string, page: 'ticket' | 'sheet' = 'ticket'): void {
@@ -89,17 +89,19 @@ const STOCK_CHANNEL_LABEL = { all: 'Total (caja + online)', physical: 'Caja', on
 
 /** Tarjeta de existencia lista para imprimir en hoja: del movimiento más antiguo al más nuevo, con saldo. */
 export function stockCardHtml(card: StockCard, range: { from?: string; to?: string } = {}, business = 'Nexus'): string {
+  const money = (v: number | undefined) => (v === undefined ? '' : formatClp(v));
   const rows = [...card.rows].reverse().map((r) =>
-    `<tr><td>${esc(fmtDate(r.at))}${r.dateOnly ? '' : ` ${esc(fmtTime(r.at))}`}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : 'Online'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td></tr>`).join('');
+    `<tr><td>${esc(fmtDate(r.at))}${r.dateOnly ? '' : ` ${esc(fmtTime(r.at))}`}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : 'Online'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td><td class="n">${formatClp(r.unitCostClp)}</td><td class="n">${formatClp(r.unitPriceNetClp)}<br><span class="muted">${formatClp(r.unitPriceClp)} c/IVA</span></td><td class="n">${money(r.entryValueClp)}</td><td class="n">${money(r.exitValueClp)}</td></tr>`).join('');
   const cols = card.channel === 'all' ? 6 : 5;
   const period = range.from || range.to ? ` · Período: ${esc(range.from ?? 'inicio')} a ${esc(range.to ?? 'hoy')}` : '';
   return `<h1>${esc(business)} · Tarjeta de existencia</h1>
     <div><b>${esc(card.product.name)}</b> · SKU ${esc(card.product.sku)} · Código ${esc(card.product.barcode)}</div>
     <div class="muted">${STOCK_CHANNEL_LABEL[card.channel]}${period} · Emitida ${esc(fmtDateTime(new Date().toISOString()))}</div>
     <div class="muted">Existencia actual ${card.currentQty} · Costo unitario ${formatClp(card.product.costClp)} · Precio neto de venta unitario ${formatClp(splitIva(card.product.priceClp).netClp)} (${formatClp(card.product.priceClp)} con IVA)</div>
-    <table><thead><tr><th>Fecha</th><th>Detalle</th>${card.channel === 'all' ? '<th>Canal</th>' : ''}<th class="n">Entrada</th><th class="n">Salida</th><th class="n">Saldo</th></tr></thead>
-    <tbody><tr><td colspan="${cols - 1}"><i>Saldo inicial</i></td><td class="n"><b>${card.openingQty}</b></td></tr>${rows}
-    <tr><td colspan="${cols - 3}"><b>Totales</b></td><td class="n"><b>${card.entries}</b></td><td class="n"><b>${card.exits}</b></td><td class="n"><b>${card.closingQty}</b></td></tr></tbody></table>`;
+    <table><thead><tr><th>Fecha</th><th>Detalle</th>${card.channel === 'all' ? '<th>Canal</th>' : ''}<th class="n">Entrada</th><th class="n">Salida</th><th class="n">Saldo</th><th class="n">Costo unit.</th><th class="n">Precio venta neto unit.</th><th class="n">Valor entrada</th><th class="n">Valor salida</th></tr></thead>
+    <tbody><tr><td colspan="${cols - 1}"><i>Saldo inicial</i></td><td class="n"><b>${card.openingQty}</b></td><td colspan="4"></td></tr>${rows}
+    <tr><td colspan="${cols - 3}"><b>Totales</b></td><td class="n"><b>${card.entries}</b></td><td class="n"><b>${card.exits}</b></td><td class="n"><b>${card.closingQty}</b></td><td colspan="2"></td><td class="n"><b>${formatClp(card.entryValueClp)}</b></td><td class="n"><b>${formatClp(card.exitValueClp)}</b></td></tr></tbody></table>
+    <div class="muted" style="margin-top:6px">Entradas al costo; salidas por venta al precio de venta neto; consumos y anulaciones de compra al costo. Los traspasos no se valoran.</div>`;
 }
 
 export const CHANNEL_LABEL: Record<Ticket['channel'], string> = {

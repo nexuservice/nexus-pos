@@ -6,6 +6,11 @@ export function splitIva(totalClp: number): { netClp: number; ivaClp: number } {
   return { netClp, ivaClp: totalClp - netClp };
 }
 
+/** Inverso de splitIva: pasa un precio neto al precio publicado, con IVA incluido. */
+export function addIva(netClp: number): number {
+  return Math.round(netClp * (1 + IVA_RATE));
+}
+
 export function formatClp(n: number): string {
   const v = Math.round(n);
   return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('es-CL');

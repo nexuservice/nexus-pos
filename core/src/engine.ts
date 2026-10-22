@@ -4,7 +4,7 @@ import type {
   Purchase, PurchaseInput, PurchaseLine, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
 } from './types';
 import { PAY_METHODS, PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, isTerminalMethod } from './types';
-import { splitIva } from './money';
+import { addIva, splitIva } from './money';
 import { isValidRut, normalizeRut } from './rut';
 import { buildBoletaXml } from './billing';
 import { buildSalesReport, santiagoDay } from './reports';
@@ -71,6 +71,11 @@ export class PosEngine {
   private cell(b: string, p: string, c: Channel): StockCell {
     const k = this.key(b, p, c);
     return (this.state.stock[k] ??= { qty: 0, reserved: 0 });
+  }
+  /** Costo y precio vigentes del producto, para dejarlos anotados en el movimiento de stock. */
+  private snap(productId: string): { unitCostClp: number; unitPriceClp: number } {
+    const p = this.state.products.find((x) => x.id === productId);
+    return { unitCostClp: p?.costClp ?? 0, unitPriceClp: p?.priceClp ?? 0 };
   }
   private product(code: string): Product | undefined {
     return this.state.products.find((p) => p.id === code || p.barcode === code || p.sku === code);
@@ -165,7 +170,7 @@ export class PosEngine {
     if (c.qty + delta < c.reserved) throw new PosError('INSUFFICIENT_STOCK', 'El ajuste deja menos stock que lo reservado');
     c.qty += delta;
     this.state.movements.push({
-      id: this.id('mov'), branchId, productId: p.id, channel, delta, reason: 'adjustment', at: this.now().toISOString(),
+      id: this.id('mov'), branchId, productId: p.id, channel, delta, reason: 'adjustment', at: this.now().toISOString(), ...this.snap(p.id),
     });
   }
 
@@ -180,8 +185,8 @@ export class PosEngine {
     const at = this.now().toISOString();
     const refId = this.id('xfer');
     this.state.movements.push(
-      { id: this.id('mov'), branchId, productId, channel: from, delta: -quantity, reason: 'transfer', refId, at },
-      { id: this.id('mov'), branchId, productId, channel: to, delta: quantity, reason: 'transfer', refId, at },
+      { id: this.id('mov'), branchId, productId, channel: from, delta: -quantity, reason: 'transfer', refId, at, ...this.snap(productId) },
+      { id: this.id('mov'), branchId, productId, channel: to, delta: quantity, reason: 'transfer', refId, at, ...this.snap(productId) },
     );
   }
 
@@ -224,10 +229,21 @@ export class PosEngine {
     let balance = currentQty - moves.reduce((n, m) => n + m.delta, 0);
     const all: StockCardRow[] = moves.map((m) => {
       balance += m.delta;
+      // Los movimientos anteriores a esta función no traen precios anotados: se usan los vigentes.
+      const unitCostClp = m.unitCostClp ?? p.costClp;
+      const unitPriceClp = m.unitPriceClp ?? p.priceClp;
+      const unitPriceNetClp = splitIva(unitPriceClp).netClp;
+      const qty = Math.abs(m.delta);
+      const isPurchaseVoid = m.reason === 'return' && (this.state.purchases ?? []).some((x) => x.id === m.refId);
+      // Entradas al costo; salidas al precio de venta neto, salvo consumos y anulaciones de compra (al costo). Los traspasos no se valoran.
+      const valued = m.reason !== 'transfer';
       return {
         id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m), dateOnly: m.reason === 'purchase' || undefined,
         saleId: (m.reason === 'sale' || m.reason === 'return') && this.state.sales.some((s) => s.id === m.refId) ? m.refId : undefined,
         entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance,
+        unitCostClp, unitPriceNetClp, unitPriceClp,
+        entryValueClp: valued && m.delta > 0 ? qty * unitCostClp : undefined,
+        exitValueClp: valued && m.delta < 0 ? qty * (m.reason === 'consumption' || isPurchaseVoid ? unitCostClp : unitPriceNetClp) : undefined,
       };
     });
 
@@ -240,6 +256,7 @@ export class PosEngine {
     return clone({
       product: p, channel, openingQty, closingQty,
       entries: inRange.reduce((n, r) => n + r.entry, 0), exits: inRange.reduce((n, r) => n + r.exit, 0),
+      entryValueClp: inRange.reduce((n, r) => n + (r.entryValueClp ?? 0), 0), exitValueClp: inRange.reduce((n, r) => n + (r.exitValueClp ?? 0), 0),
       reservedQty: cells.reduce((n, c) => n + c.reserved, 0), currentQty, rows: [...inRange].reverse(),
     });
   }
@@ -650,7 +667,7 @@ export class PosEngine {
       cell.reserved -= l.quantity;
       this.state.movements.push({
         id: this.id('mov'), branchId: cart.branchId, productId: l.productId, channel: cart.channel,
-        delta: -l.quantity, reason: 'sale', refId: saleId, at: iso,
+        delta: -l.quantity, reason: 'sale', refId: saleId, at: iso, unitCostClp: l.costClp, unitPriceClp: l.unitPriceClp,
       });
     }
 
@@ -736,6 +753,9 @@ export class PosEngine {
       const n = i + 1;
       if (!Number.isInteger(l.quantity) || l.quantity <= 0) throw new PosError('INVALID_QTY', `Línea ${n}: la cantidad debe ser un entero mayor que 0`);
       if (!Number.isInteger(l.unitCostClp) || l.unitCostClp < 0) throw new PosError('INVALID_AMOUNT', `Línea ${n}: el costo unitario debe ser un entero de 0 o más`);
+      if (l.priceNetClp !== undefined && (!Number.isInteger(l.priceNetClp) || l.priceNetClp < 0)) {
+        throw new PosError('INVALID_AMOUNT', `Línea ${n}: el precio de venta neto debe ser un entero de 0 o más`);
+      }
       if (!l.productId === !l.newProduct) throw new PosError('INVALID_DATA', `Línea ${n}: elige un producto existente o crea uno nuevo`);
       if (l.productId) {
         if (!this.state.products.some((p) => p.id === l.productId)) throw new PosError('NOT_FOUND', `Línea ${n}: el producto no existe`);
@@ -743,7 +763,9 @@ export class PosEngine {
       }
       const np = l.newProduct!;
       if (!np.name?.trim()) throw new PosError('INVALID_DATA', `Línea ${n}: el producto nuevo necesita nombre`);
-      if (!Number.isInteger(np.priceClp) || np.priceClp < 0) throw new PosError('INVALID_DATA', `Línea ${n}: el precio de venta del producto nuevo es inválido`);
+      const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : np.priceClp;
+      if (newPrice === undefined) throw new PosError('INVALID_DATA', `Línea ${n}: indica el precio de venta neto del producto nuevo`);
+      if (!Number.isInteger(newPrice) || newPrice < 0) throw new PosError('INVALID_DATA', `Línea ${n}: el precio de venta del producto nuevo es inválido`);
       const bc = np.barcode?.trim();
       if (bc && (newBarcodes.has(bc) || this.state.products.some((p) => p.barcode === bc))) throw new PosError('INVALID_DATA', `Línea ${n}: ya existe un producto con ese código de barras`);
       if (bc) newBarcodes.add(bc);
@@ -755,15 +777,23 @@ export class PosEngine {
     const id = this.id('purchase');
     const lines: PurchaseLine[] = [];
     for (const l of input.lines) {
-      const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, costClp: l.unitCostClp }).id;
+      const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : undefined;
+      const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, priceClp: newPrice ?? l.newProduct!.priceClp!, costClp: l.unitCostClp }).id;
       const product = this.state.products.find((p) => p.id === productId)!;
+      if (l.productId && newPrice !== undefined) product.priceClp = newPrice; // el precio sube con la inflación: el nuevo rige desde esta compra
       if (input.updateCost !== false) {
         const before = Math.max(0, this.totalQty(productId));
         product.costClp = before > 0 ? Math.round((before * product.costClp + l.quantity * l.unitCostClp) / (before + l.quantity)) : l.unitCostClp;
       }
       this.cell(input.branchId, productId, 'physical').qty += l.quantity;
-      this.state.movements.push({ id: this.id('mov'), branchId: input.branchId, productId, channel: 'physical', delta: l.quantity, reason: 'purchase', refId: id, at });
-      lines.push({ productId, name: product.name, quantity: l.quantity, unitCostClp: l.unitCostClp, totalClp: l.quantity * l.unitCostClp });
+      this.state.movements.push({
+        id: this.id('mov'), branchId: input.branchId, productId, channel: 'physical', delta: l.quantity, reason: 'purchase', refId: id, at,
+        unitCostClp: l.unitCostClp, unitPriceClp: product.priceClp,
+      });
+      lines.push({
+        productId, name: product.name, quantity: l.quantity, unitCostClp: l.unitCostClp, totalClp: l.quantity * l.unitCostClp,
+        priceNetClp: splitIva(product.priceClp).netClp, priceClp: product.priceClp,
+      });
     }
     const netClp = lines.reduce((n, l) => n + l.totalClp, 0);
     const ivaClp = Math.round(netClp * 0.19);
@@ -805,8 +835,11 @@ export class PosEngine {
     const p = (this.state.purchases ?? []).find((x) => x.id === purchaseId);
     if (!p) throw new PosError('NOT_FOUND', 'Compra no existe');
     if (p.status === 'voided') throw new PosError('NOT_ALLOWED', 'La compra ya está anulada');
-    const perProduct = new Map<string, { name: string; qty: number }>();
-    for (const l of p.lines) perProduct.set(l.productId, { name: l.name, qty: (perProduct.get(l.productId)?.qty ?? 0) + l.quantity });
+    const perProduct = new Map<string, { name: string; qty: number; cost: number }>();
+    for (const l of p.lines) {
+      const prev = perProduct.get(l.productId);
+      perProduct.set(l.productId, { name: l.name, qty: (prev?.qty ?? 0) + l.quantity, cost: (prev?.cost ?? 0) + l.totalClp });
+    }
     for (const [productId, { name, qty }] of perProduct) {
       const c = this.cell(p.branchId, productId, 'physical');
       if (c.qty - c.reserved < qty) {
@@ -814,9 +847,12 @@ export class PosEngine {
       }
     }
     const iso = this.now().toISOString();
-    for (const [productId, { qty }] of perProduct) {
+    for (const [productId, { qty, cost }] of perProduct) {
       this.cell(p.branchId, productId, 'physical').qty -= qty;
-      this.state.movements.push({ id: this.id('mov'), branchId: p.branchId, productId, channel: 'physical', delta: -qty, reason: 'return', refId: p.id, at: iso });
+      this.state.movements.push({
+        id: this.id('mov'), branchId: p.branchId, productId, channel: 'physical', delta: -qty, reason: 'return', refId: p.id, at: iso,
+        ...this.snap(productId), unitCostClp: Math.round(cost / qty),
+      });
     }
     p.status = 'voided';
     p.voidedAt = iso;
@@ -845,7 +881,7 @@ export class PosEngine {
       cell.reserved -= l.quantity;
       this.state.movements.push({
         id: this.id('mov'), branchId: cart.branchId, productId: l.productId, channel: cart.channel,
-        delta: -l.quantity, reason: 'consumption', refId: id, at: iso,
+        delta: -l.quantity, reason: 'consumption', refId: id, at: iso, unitCostClp: l.costClp, unitPriceClp: l.unitPriceClp,
       });
     }
     const consumption: Consumption = {
@@ -881,7 +917,7 @@ export class PosEngine {
       this.cell(c.branchId, l.productId, 'physical').qty += l.quantity;
       this.state.movements.push({
         id: this.id('mov'), branchId: c.branchId, productId: l.productId, channel: 'physical',
-        delta: l.quantity, reason: 'return', refId: c.id, at: iso,
+        delta: l.quantity, reason: 'return', refId: c.id, at: iso, unitCostClp: l.costClp, unitPriceClp: l.unitPriceClp,
       });
     }
     c.status = 'voided';
@@ -950,7 +986,7 @@ export class PosEngine {
       this.cell(sale.branchId, l.productId, sale.channel).qty += l.quantity;
       this.state.movements.push({
         id: this.id('mov'), branchId: sale.branchId, productId: l.productId, channel: sale.channel,
-        delta: l.quantity, reason: 'return', refId: sale.id, at: iso,
+        delta: l.quantity, reason: 'return', refId: sale.id, at: iso, unitCostClp: l.costClp, unitPriceClp: l.unitPriceClp,
       });
     }
     sale.status = 'voided';

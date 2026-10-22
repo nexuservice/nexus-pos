@@ -44,7 +44,7 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
   }
 
   return (
-    <Modal title={`📇 Tarjeta de existencia · ${product.name}`} wide onClose={onClose}>
+    <Modal title={`📇 Tarjeta de existencia · ${product.name}`} xwide onClose={onClose}>
       <p className="hint">SKU {product.sku} · Código {product.barcode}</p>
       <div className="filters">
         <div className="seg">{VIEWS.map(([v, label]) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>{label}</button>)}</div>
@@ -61,23 +61,41 @@ export function StockCardModal({ api, branchId, product, onClose }: { api: PosAp
             <div className="kpi"><span>Precio neto de venta (unitario)</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small></div>
           </div>
           <div className="table-wrap stock-card"><table>
-            <thead><tr><th>Fecha</th><th>Detalle</th>{showChannel && <th>Canal</th>}<th className="num">Entrada</th><th className="num">Salida</th><th className="num">Saldo</th></tr></thead>
+            <thead><tr>
+              <th>Fecha</th><th>Detalle</th>{showChannel && <th>Canal</th>}
+              <th className="num">Entrada</th><th className="num">Salida</th><th className="num">Saldo</th>
+              <th className="num" title="Costo neto unitario vigente en ese movimiento">Costo unit.</th>
+              <th className="num" title="Precio de venta neto unitario vigente en ese movimiento (con IVA debajo)">Precio venta neto unit.</th>
+              <th className="num" title="Cantidad de entrada × costo">Valor entrada</th>
+              <th className="num" title="Cantidad de salida × precio de venta neto (consumos y anulaciones de compra, al costo)">Valor salida</th>
+            </tr></thead>
             <tbody>
               {card.rows.map((r) => (
                 <tr key={r.id}>
                   <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td>
                   <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : 'Online'}</td>}
                   <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
+                  <td className="num">{formatClp(r.unitCostClp)}</td>
+                  <td className="num">{formatClp(r.unitPriceNetClp)}<small>{formatClp(r.unitPriceClp)} c/IVA</small></td>
+                  <td className="num up">{r.entryValueClp !== undefined ? formatClp(r.entryValueClp) : ''}</td>
+                  <td className="num down">{r.exitValueClp !== undefined ? formatClp(r.exitValueClp) : ''}</td>
                 </tr>
               ))}
-              {!card.rows.length && <tr><td colSpan={showChannel ? 6 : 5} className="empty">Sin movimientos en este período</td></tr>}
-              <tr className="opening"><td colSpan={showChannel ? 5 : 4}><i>Saldo inicial</i></td><td className="num"><b>{card.openingQty}</b></td></tr>
+              {!card.rows.length && <tr><td colSpan={showChannel ? 10 : 9} className="empty">Sin movimientos en este período</td></tr>}
+              <tr className="opening"><td colSpan={showChannel ? 5 : 4}><i>Saldo inicial</i></td><td className="num"><b>{card.openingQty}</b></td><td colSpan={4} /></tr>
             </tbody>
             <tfoot>
-              <tr><td colSpan={showChannel ? 3 : 2}><b>Totales del período</b></td><td className="num up"><b>{card.entries}</b></td><td className="num down"><b>{card.exits}</b></td><td className="num"><b>{card.closingQty}</b></td></tr>
+              <tr>
+                <td colSpan={showChannel ? 3 : 2}><b>Totales del período</b></td>
+                <td className="num up"><b>{card.entries}</b></td><td className="num down"><b>{card.exits}</b></td><td className="num"><b>{card.closingQty}</b></td><td colSpan={2} />
+                <td className="num up"><b>{formatClp(card.entryValueClp)}</b></td><td className="num down"><b>{formatClp(card.exitValueClp)}</b></td>
+              </tr>
             </tfoot>
           </table></div>
-          {showChannel && <p className="hint">En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.</p>}
+          <p className="hint">
+            Las entradas se valoran al costo y las salidas por venta al precio de venta neto de ese día; los consumos y las anulaciones de compra, al costo. Los traspasos no se valoran.
+            {showChannel && ' En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.'}
+          </p>
         </>
       )}
       <div className="row-btns">
