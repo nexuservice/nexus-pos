@@ -55,6 +55,62 @@ export function PriceModal({ api, product, onClose, onSaved }: { api: PosApi; pr
   );
 }
 
+/** Libro de existencias: fecha, detalle, unidades (entrada, salida, saldo) y valores (entrada, salida, saldo), de arriba hacia abajo. */
+function Ledger({ card, from, showChannel, onOpenSale }: { card: StockCard; from: string; showChannel: boolean; onOpenSale: (saleId: string) => void }) {
+  // Sin fecha de inicio, el inventario inicial cuenta como una entrada; con ella, es solo el saldo que se arrastra.
+  const openingIsEntry = !from;
+  const showOpening = card.openingQty !== 0 || !!from;
+  const rows = [...card.rows].reverse();
+  const perUnit = (value: number, qty: number) => `${qty} × ${formatClp(value / qty)}`;
+  const totalEntries = card.entries + (openingIsEntry ? card.openingQty : 0);
+  const totalEntryValue = card.entryValueClp + (openingIsEntry ? card.openingValueClp : 0);
+  return (
+    <div className="table-wrap stock-card">
+      <table className="ledger">
+        <thead>
+          <tr><th rowSpan={2}>Fecha</th><th rowSpan={2}>Detalle</th><th colSpan={3} className="grp">Unidades</th><th colSpan={3} className="grp sep">Valores</th></tr>
+          <tr>
+            <th className="num">Entrada</th><th className="num">Salida</th><th className="num">Saldo</th>
+            <th className="num sep" title="Entradas al costo">Entrada</th><th className="num" title="Salidas al precio de venta neto (consumos, al costo)">Salida</th><th className="num">Saldo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {showOpening && (
+            <tr className="opening">
+              <td>{from ? fmtDate(`${from}T15:00:00Z`) : '—'}</td>
+              <td>{from ? 'Saldo inicial del período' : 'Inventario inicial'}</td>
+              <td className="num up">{openingIsEntry && card.openingQty ? `+${card.openingQty}` : ''}</td><td className="num" /><td className="num"><b>{card.openingQty}</b></td>
+              <td className="num up sep">{openingIsEntry && card.openingQty ? <>{formatClp(card.openingValueClp)}<small>{perUnit(card.openingValueClp, card.openingQty)}</small></> : ''}</td>
+              <td className="num" /><td className="num"><b>{formatClp(card.openingValueClp)}</b></td>
+            </tr>
+          )}
+          {rows.map((r) => (
+            <tr key={r.id} className={r.type === 'price' ? 'price-row' : ''}>
+              <td>{fmtDate(r.at)}</td>
+              <td>
+                {r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => onOpenSale(r.saleId!)}>{r.detail}</button> : r.detail}
+                {showChannel && r.channel === 'online' && <small>Online</small>}
+              </td>
+              <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
+              <td className="num up sep">{r.entryValueClp !== undefined ? <>{formatClp(r.entryValueClp)}<small>{perUnit(r.entryValueClp, r.entry)}</small></> : ''}</td>
+              <td className="num down">{r.exitValueClp !== undefined ? <>{formatClp(r.exitValueClp)}<small>{perUnit(r.exitValueClp, r.exit)}</small></> : ''}</td>
+              <td className="num"><b>{formatClp(r.balanceValueClp)}</b></td>
+            </tr>
+          ))}
+          {!rows.length && !showOpening && <tr><td colSpan={8} className="empty">Sin movimientos en este período</td></tr>}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={2}><b>Totales</b></td>
+            <td className="num up"><b>{totalEntries}</b></td><td className="num down"><b>{card.exits}</b></td><td className="num"><b>{card.closingQty}</b></td>
+            <td className="num up sep"><b>{formatClp(totalEntryValue)}</b></td><td className="num down"><b>{formatClp(card.exitValueClp)}</b></td><td className="num"><b>{formatClp(card.closingValueClp)}</b></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 /** Tarjeta de existencia (kardex) de un producto: entradas, salidas y saldo después de cada movimiento. */
 export function StockCardModal({ api, branchId, product, onClose, onChanged }: { api: PosApi; branchId: string; product: Product; onClose: () => void; onChanged?: () => void }) {
   const [view, setView] = useState<View>('all');
@@ -109,46 +165,15 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
       {error && <div className="alert" role="alert">{error}</div>}
       {card && (
         <>
-          <div className="kpis">
+          <div className="kpis compact">
             <div className="kpi"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
             <div className="kpi"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
             <div className="kpi"><span>Precio neto de venta (unitario)</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small>
               <button className="btn ghost sm" onClick={() => setEditingPrice(true)}>✏️ Editar precio</button></div>
           </div>
-          <div className="table-wrap stock-card"><table>
-            <thead><tr>
-              <th>Fecha</th><th>Detalle</th>{showChannel && <th>Canal</th>}
-              <th className="num">Entrada</th><th className="num">Salida</th><th className="num">Saldo</th>
-              <th className="num" title="Costo neto unitario vigente en ese movimiento">Costo unit.</th>
-              <th className="num" title="Precio de venta neto unitario vigente en ese movimiento (con IVA debajo)">Precio venta neto unit.</th>
-              <th className="num" title="Cantidad de entrada × costo">Valor entrada</th>
-              <th className="num" title="Cantidad de salida × precio de venta neto (consumos y anulaciones de compra, al costo)">Valor salida</th>
-            </tr></thead>
-            <tbody>
-              {card.rows.map((r) => (
-                <tr key={r.id} className={r.type === 'price' ? 'price-row' : ''}>
-                  <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td>
-                  <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : r.channel === 'online' ? 'Online' : '—'}</td>}
-                  <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
-                  <td className="num">{formatClp(r.unitCostClp)}</td>
-                  <td className="num">{formatClp(r.unitPriceNetClp)}<small>{formatClp(r.unitPriceClp)} c/IVA</small></td>
-                  <td className="num up">{r.entryValueClp !== undefined ? formatClp(r.entryValueClp) : ''}</td>
-                  <td className="num down">{r.exitValueClp !== undefined ? formatClp(r.exitValueClp) : ''}</td>
-                </tr>
-              ))}
-              {!card.rows.length && <tr><td colSpan={showChannel ? 10 : 9} className="empty">Sin movimientos en este período</td></tr>}
-              <tr className="opening"><td colSpan={showChannel ? 5 : 4}><i>Saldo inicial</i></td><td className="num"><b>{card.openingQty}</b></td><td colSpan={4} /></tr>
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={showChannel ? 3 : 2}><b>Totales del período</b></td>
-                <td className="num up"><b>{card.entries}</b></td><td className="num down"><b>{card.exits}</b></td><td className="num"><b>{card.closingQty}</b></td><td colSpan={2} />
-                <td className="num up"><b>{formatClp(card.entryValueClp)}</b></td><td className="num down"><b>{formatClp(card.exitValueClp)}</b></td>
-              </tr>
-            </tfoot>
-          </table></div>
+          <Ledger card={card} from={from} showChannel={showChannel} onOpenSale={openSale} />
           <p className="hint">
-            Las entradas se valoran al costo y las salidas por venta al precio de venta neto de ese día; los consumos y las anulaciones de compra, al costo. Los traspasos no se valoran.
+            En orden cronológico: el saldo corre hacia abajo. Valores: las entradas van al costo; las salidas por venta, al precio de venta neto de ese día (consumos y anulaciones de compra, al costo); el saldo es entradas menos salidas. El inventario inicial se valora al costo que había antes del primer movimiento. Los traspasos no se valoran.
             {showChannel && ' En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.'}
           </p>
         </>

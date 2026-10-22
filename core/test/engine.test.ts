@@ -387,7 +387,7 @@ describe('compras a proveedores', () => {
     expect(card.openingQty).toBe(10);
     // la compra tiene fecha anterior a la venta, así que va antes aunque se registró después
     expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
-      [expect.stringMatching(/^Venta #1$/), 0, 3, 27],
+      ['Boleta N° 1', 0, 3, 27],
       ['Compra · Factura N° 4521 · Distribuidora Sur', 20, 0, 30],
     ]);
     expect(card.rows[1]).toMatchObject({ at: '2026-10-10T15:00:00.000Z', dateOnly: true, type: 'purchase' });
@@ -519,7 +519,7 @@ describe('precios y valores en la tarjeta de existencia', () => {
     e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000, priceNetClp: 1800 }] });
     await sell(e, COLA, 1, 3000); // ahora $2.142 (neto $1.800)
     const card = e.stockCard(B, COLA, 'physical');
-    const pick = (r: (typeof card.rows)[number]) => [r.detail.split(' ')[0], r.unitCostClp, r.unitPriceNetClp, r.unitPriceClp, r.entryValueClp, r.exitValueClp];
+    const pick = (r: (typeof card.rows)[number]) => [r.detail.split(' ')[0] === 'Boleta' ? 'Venta' : r.detail.split(' ')[0], r.unitCostClp, r.unitPriceNetClp, r.unitPriceClp, r.entryValueClp, r.exitValueClp];
     expect(card.rows.map(pick)).toEqual([
       ['Venta', 1084, 1800, 2142, undefined, 1800],
       ['Compra', 1000, 1800, 2142, 20_000, undefined],
@@ -527,6 +527,25 @@ describe('precios y valores en la tarjeta de existencia', () => {
     ]);
     expect(card).toMatchObject({ entryValueClp: 20_000, exitValueClp: 5144, entries: 20, exits: 3 });
     expect(e.stockCard(B, COLA, 'all', '2999-01-01')).toMatchObject({ entryValueClp: 0, exitValueClp: 0 });
+  });
+
+  it('el saldo valorizado corre como el de unidades: inventario inicial al costo + entradas − salidas', async () => {
+    const e = mk();
+    await sell(e, COLA, 2, 6000); // 10 → 8 un.; sale a $1.672 neto = $3.344
+    e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000, priceNetClp: 1800 }] });
+    await sell(e, COLA, 1, 3000); // sale a $1.800 neto
+    const card = e.stockCard(B, COLA, 'physical');
+    // inventario inicial: 10 un. al costo que había antes de la compra ($1.294), aunque la compra fuera a $1.000
+    expect(card).toMatchObject({ openingQty: 10, openingUnitCostClp: 1294, openingValueClp: 12_940, closingQty: 27 });
+    expect(card.rows.map((r) => [r.balance, r.balanceValueClp]).reverse()).toEqual([
+      [8, 12_940 - 3344], // 9.596
+      [28, 12_940 - 3344 + 20_000], // 29.596
+      [27, 12_940 - 3344 + 20_000 - 1800], // 27.796
+    ]);
+    expect(card.closingValueClp).toBe(27_796);
+    // con un período, el inicial valorizado arrastra lo anterior
+    const later = e.stockCard(B, COLA, 'physical', '2026-10-21');
+    expect(later).toMatchObject({ openingQty: 27, openingValueClp: 27_796, closingValueClp: 27_796, rows: [] });
   });
 
   it('consumos y anulaciones de compra salen al costo; ajustes siguen la regla; los traspasos no se valoran', () => {
@@ -657,8 +676,8 @@ describe('tarjeta de existencia', () => {
     expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
       ['Traspaso a Online', 0, 1, 9],
       ['Ajuste de inventario', 5, 0, 10],
-      ['Consumo #1 · degustación', 0, 2, 5],
-      [`Venta #${e.getSale(sale.saleId!).number}`, 0, 3, 7],
+      ['Consumo N° 1 · degustación', 0, 2, 5],
+      [`Boleta N° ${e.getSale(sale.saleId!).document!.folio}`, 0, 3, 7],
     ]);
     expect(card).toMatchObject({ closingQty: 9, currentQty: 9, entries: 5, exits: 6 });
     // solo las ventas apuntan a su boleta; consumo, ajuste y traspaso no
@@ -685,7 +704,7 @@ describe('tarjeta de existencia', () => {
     const num = e.getSale(p.saleId!).number;
     e.voidSale(p.saleId!);
     const card = e.stockCard(B, AGUA, 'physical');
-    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de venta #${num}`, 40], [`Venta #${num}`, 38]]);
+    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de boleta N° ${num}`, 40], [`Boleta N° ${num}`, 38]]); // folio = número de venta en esta demo
     expect(card.rows.map((r) => r.saleId)).toEqual([p.saleId, p.saleId]); // la anulación también abre la boleta
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
     expect(e.stockCard(B, AGUA, 'physical', hoy, hoy).rows).toHaveLength(2);

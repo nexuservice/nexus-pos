@@ -300,6 +300,8 @@ export interface StockMovement {
   /** Costo neto unitario y precio de venta unitario (con IVA) vigentes en ese movimiento: con la inflación van cambiando. */
   unitCostClp?: number;
   unitPriceClp?: number;
+  /** Solo en compras: el costo del producto justo antes de esa compra (sirve para valorar el inventario inicial). */
+  costBeforeClp?: number;
   at: string;
 }
 
@@ -329,6 +331,8 @@ export interface StockCardRow {
   entryValueClp?: number;
   /** Cantidad × precio de venta neto (consumos y anulaciones de compra, al costo). */
   exitValueClp?: number;
+  /** Saldo valorizado después de este movimiento: inventario inicial + valor de entradas − valor de salidas. */
+  balanceValueClp: number;
 }
 
 /** Tarjeta de existencia (kardex) de un producto. Las filas van de la más nueva a la más antigua. */
@@ -337,6 +341,10 @@ export interface StockCard {
   channel: Channel | 'all';
   openingQty: number;
   closingQty: number;
+  /** Inventario inicial valorizado al costo, y costo unitario con que se valoró (sin filtro de fecha). */
+  openingValueClp: number;
+  openingUnitCostClp: number;
+  closingValueClp: number;
   entries: number;
   exits: number;
   /** Valor de las entradas del período (al costo) y de las salidas (al precio de venta neto; consumos al costo). */
