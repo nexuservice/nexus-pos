@@ -82,15 +82,15 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
     return <PriceModal api={api} product={card.product} onClose={() => setEditingPrice(false)} onSaved={() => { setVersion((v) => v + 1); onChanged?.(); }} />;
   }
 
-  // La boleta se muestra en lugar de la tarjeta; al cerrarla se vuelve a la tarjeta con sus filtros.
+  // El comprobante se muestra en lugar de la tarjeta; al cerrarlo se vuelve a la tarjeta con sus filtros.
   if (sale) {
     return (
-      <Modal title={`Boleta N° ${sale.document?.folio ?? '—'} · Venta #${sale.number}`} wide onClose={() => setSale(null)}>
+      <Modal title={`Comprobante de venta interno · Pedido #${sale.number}`} wide onClose={() => setSale(null)}>
         <Receipt sale={sale} />
         <ul className="items">{sale.lines.map((l) => <li key={l.productId}>{l.quantity} × {l.name} <b>{formatClp(l.unitPriceClp * l.quantity)}</b></li>)}</ul>
         {sale.status === 'voided' && <div className="alert">Venta anulada{sale.voidReason ? `: ${sale.voidReason}` : ''}.</div>}
         <div className="row-btns">
-          <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Reimprimir boleta</button>
+          <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Reimprimir comprobante</button>
           <button className="btn primary" onClick={() => setSale(null)}>Volver a la tarjeta</button>
         </div>
       </Modal>
@@ -128,7 +128,7 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
               {card.rows.map((r) => (
                 <tr key={r.id} className={r.type === 'price' ? 'price-row' : ''}>
                   <td>{fmtDate(r.at)}{r.dateOnly ? '' : ` ${fmtTime(r.at)}`}</td>
-                  <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : r.channel === 'online' ? 'Online' : '—'}</td>}
+                  <td>{r.saleId ? <button className="link-btn" title="Ver y reimprimir el comprobante" onClick={() => openSale(r.saleId!)}>{r.detail}</button> : r.detail}</td>{showChannel && <td>{r.channel === 'physical' ? 'Caja' : r.channel === 'online' ? 'Online' : '—'}</td>}
                   <td className="num up">{r.entry ? `+${r.entry}` : ''}</td><td className="num down">{r.exit ? `−${r.exit}` : ''}</td><td className="num"><b>{r.balance}</b></td>
                   <td className="num">{formatClp(r.unitCostClp)}</td>
                   <td className="num">{formatClp(r.unitPriceNetClp)}<small>{formatClp(r.unitPriceClp)} c/IVA</small></td>

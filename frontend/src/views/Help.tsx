@@ -3,11 +3,13 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
     id: 'inicio', title: '📋 Resumen general',
     body: (
       <>
-        <p>Nexus junta en una sola plataforma tu <b>Caja</b> (punto de venta) y tu <b>Tienda online</b>, con el mismo inventario, boleta electrónica y reportes.</p>
+        <p>Nexus junta en una sola plataforma tu <b>Caja</b> (punto de venta) y tu <b>Tienda online</b>, con el mismo inventario, comprobantes de venta internos y reportes. Es un sistema de <b>control de tu negocio</b>: sus comprobantes no son documentos tributarios.</p>
         <ul>
           <li><b>Caja</b>: vender en el local. Requiere una jornada abierta.</li>
           <li><b>Tienda online</b>: catálogo y carrito para tus clientes. No requiere jornada.</li>
-          <li><b>Administración</b>: productos, clientes, cajeros, promociones, inventario y jornadas. En <i>Inventario</i>, toca el nombre de un producto para ver su <b>tarjeta de existencia</b>: cada entrada y salida (ventas, consumos, ajustes, traspasos y anulaciones) con el saldo después de cada movimiento. Se puede ver por Total, Caja u Online, filtrar por fechas e imprimir. Si el movimiento es una venta (o su anulación), toca «Venta #N» para ver la boleta y <b>reimprimirla</b>.</li>
+          <li><b>Administración</b>: productos, clientes, cajeros, promociones, inventario y jornadas. En <i>Inventario</i>, toca el nombre de un producto para ver su <b>tarjeta de existencia</b>: cada entrada y salida (ventas, consumos, ajustes, traspasos y anulaciones) con el saldo después de cada movimiento. Se puede ver por Total, Caja u Online, filtrar por fechas e imprimir. Si el movimiento es una venta (o su anulación), toca «Venta #N» para ver el comprobante y <b>reimprimirlo</b>.</li>
+          <li><b>Ingreso por escaneo</b> (<i>Administración → Ingreso por escaneo</i>): la forma más rápida de cargar tu inventario. Escanea el código de barras y presiona Enter. Si el producto <b>no existe</b>, se abre un formulario para crearlo con su nombre, categoría, <b>costo</b>, <b>precio de venta neto</b> (el sistema calcula el valor con IVA) y cantidad. Si <b>ya existe</b>, suma 1 unidad al escanearlo (puedes desactivar esa opción para indicar la cantidad, el costo o un precio nuevo). Cada ingreso queda en la tarjeta de existencia como «Ingreso de inventario».</li>
+          <li><b>Mi negocio</b>: el nombre, RUT, giro y dirección de tu empresa, que salen en el encabezado de tus comprobantes.</li>
           <li><b>Compras</b>: en <i>Administración → Productos</i> hay dos botones, <b>Nuevo producto</b> (crea el producto sin unidades) y <b>Nueva compra</b>. La compra registra proveedor, documento (factura, boleta o guía), número y fecha, y las cantidades con su costo neto; en la misma compra puedes crear productos nuevos. Las unidades entran a la caja como <i>compra</i>, no como ajuste, y quedan en la tarjeta de existencia con el documento y la fecha de la factura (el saldo inicial no cambia). Por defecto el costo del producto pasa a ser el promedio ponderado. En cada línea puedes digitar el <b>precio de venta neto unitario</b> nuevo (el sistema muestra el valor con IVA): en un producto nuevo es obligatorio y en uno existente sirve para subir el precio por inflación; si lo dejas vacío, el precio no cambia. La tarjeta de existencia guarda el costo y el precio de cada momento y suma los <b>valores</b>: las entradas se valoran al costo y las salidas por venta al precio de venta neto de ese día (consumos y anulaciones de compra, al costo). Si el precio quedó mal, en <i>Administración → Inventario</i> usa «✏️ Editar» (o «Editar precio» dentro de la tarjeta) y digita el neto correcto: el nuevo precio rige desde ese momento, <b>las ventas ya hechas no cambian</b> y el cambio queda anotado en la tarjeta como «Cambio de precio», con su motivo. Todas las compras están en <i>Administración → Compras</i>, donde se pueden anular mientras las unidades sigan en la caja.</li>
           <li><b>Panel</b> e <b>Historial</b>: analítica y revisión de ventas.</li>
         </ul>
@@ -35,7 +37,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
         <li><b>Débito / Crédito:</b> el cobro pasa por el terminal (simulado en esta demo, con Transbank por defecto) y muestra su avance.</li>
         <li><b>Cheque y transferencia:</b> se registran al instante, sin terminal.</li>
         <li><b>Convenio (crédito):</b> solo para clientes registrados con RUT y marcados como «Autorizado para convenio» en Administración → Clientes. Sin un cliente autorizado el botón queda bloqueado. La venta se suma a lo que el cliente debe.</li>
-        <li><b>Consumo:</b> el botón «🍽️ Consumo» junto a «Limpiar» saca los productos del pedido del inventario valorizados al costo. No es una venta: no cobra, no emite boleta ni usa folio, y no deja ganancia. Queda registrado en el Panel como «Consumo propio». Si te equivocas, en Historial → «Consumos propios» puedes anularlo y las unidades vuelven al inventario.</li>
+        <li><b>Consumo:</b> el botón «🍽️ Consumo» junto a «Limpiar» saca los productos del pedido del inventario valorizados al costo. No es una venta: no cobra, no genera comprobante ni número de pedido, y no deja ganancia. Queda registrado en el Panel como «Consumo propio». Si te equivocas, en Historial → «Consumos propios» puedes anularlo y las unidades vuelven al inventario.</li>
         <li><b>Deuda del cliente:</b> al buscar un cliente se ve cuánto debe en total. Con «Pagar deuda» (también en Administración → Clientes → «Cobrar deuda») se registra el pago completo o un abono, con la forma de pago que elijas. Requiere jornada abierta y el abono entra al arqueo de esa jornada. El botón «🖨 Imprimir detalle» entrega un estado de cuenta con cada compra a convenio (productos, cantidades y precios), los abonos y el saldo, para que el cliente revise antes de pagar.</li>
       </ul>
     ),
@@ -47,7 +49,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
         <p><b>Dejar pedido abierto</b> guarda el pedido con el nombre del cliente, teléfono, canal y observaciones, e imprime la comanda. El stock queda reservado.</p>
         <ul>
           <li><b>Pendiente de pago:</b> se cobra cuando el cliente retire (botón <i>Cobrar</i> en Pedidos).</li>
-          <li><b>Ya pagó:</b> se cobra y se emite la boleta al guardar; luego se marca <i>Entregado</i>.</li>
+          <li><b>Ya pagó:</b> se cobra y se registra la venta al guardar; luego se marca <i>Entregado</i>.</li>
         </ul>
         <p>Desde <i>Pedidos → WhatsApp</i> elige una plantilla (pedido listo, en preparación, detalle, aviso), revisa el número y el mensaje y pulsa <i>Abrir WhatsApp</i>. A los números de 9 dígitos se les agrega +56. Usa un enlace de WhatsApp, sin API: confirmas el envío allí.</p>
       </>
@@ -58,7 +60,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
     body: (
       <>
         <p>Menú <i>Promociones</i> de la Caja: <b>Ver promociones activas</b> (con botón Aplicar), <b>Aplicar código promo</b> y <b>Crear promoción</b>. También en <i>Administración → Descuentos y promociones</i>.</p>
-        <p>Tipos: <b>porcentaje</b> (1 a 100 %) o <b>monto fijo</b> en CLP; con código, fecha de vencimiento y estado activo/inactivo. El descuento aparece en el carrito y en la boleta.</p>
+        <p>Tipos: <b>porcentaje</b> (1 a 100 %) o <b>monto fijo</b> en CLP; con código, fecha de vencimiento y estado activo/inactivo. El descuento aparece en el carrito y en el comprobante.</p>
       </>
     ),
   },
@@ -78,18 +80,17 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
     body: (
       <>
         <p>El <b>Panel</b> muestra ventas, ingresos, ticket promedio, utilidad bruta, ítems, descuentos, anuladas y costo, comparados con el período anterior, más gráficos por día, medio de pago, categoría, día de la semana y hora. Filtra con Hoy, Semana, Mes, Año o un rango.</p>
-        <p>El <b>Historial</b> lista las últimas 100 ventas, permite ver la boleta (y su XML), imprimir, <b>anular</b> (devuelve el stock) y exportar a Excel (CSV) o JSON.</p>
-        <p className="tip">💡 Una boleta emitida se anula en el SII con una nota de crédito electrónica; Nexus la deja marcada como anulada.</p>
+        <p>El <b>Historial</b> lista las últimas 100 ventas, permite ver el comprobante, imprimirlo, <b>anular</b> la venta (devuelve el stock) y exportar a Excel (CSV) o JSON. Una venta anulada queda marcada y no suma en los reportes.</p>
       </>
     ),
   },
   {
-    id: 'limites', title: 'ℹ️ Alcance de esta demo',
+    id: 'limites', title: 'ℹ️ Qué es y qué no es Nexus',
     body: (
       <ul>
-        <li>Los pagos con tarjeta son simulados; no se cobra dinero real.</li>
-        <li>La boleta tiene la estructura del SII (DTE 39) pero sin timbre ni firma, y no se envía al SII.</li>
-        <li>Sin servidor, los datos viven solo en este navegador (botón <i>Reiniciar demo</i>).</li>
+        <li><b>Nexus es un sistema de control interno</b> de inventario, ventas y caja. Sus comprobantes <b>no son documentos tributarios</b> y no se envían al SII: para emitir boletas o facturas legales sigue usando tu máquina POS o tu sistema de facturación.</li>
+        <li>Los pagos con tarjeta <b>no se cobran desde Nexus</b>: se registra la venta con el medio de pago que usaste en tu terminal.</li>
+        <li>Tus datos se guardan en el servidor, asociados a tu RUT, y los ves desde cualquier equipo al ingresar con tu clave. Usa el menú ⚙️ → <i>Respaldar base de datos</i> para bajar una copia cuando quieras.</li>
       </ul>
     ),
   },

@@ -1,4 +1,4 @@
-import { PAY_METHOD_LABEL, formatClp, splitIva, type ClientBalance, type StockCard, type Ticket } from '@nexus/core';
+import { PAY_METHOD_LABEL, formatClp, splitIva, type Business, type ClientBalance, type StockCard, type Ticket } from '@nexus/core';
 
 export function download(filename: string, content: string, mime: string): void {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -34,12 +34,24 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 }
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 const TICKET_CSS = 'body{font:13px monospace;width:72mm;margin:4mm}h1{font-size:16px;margin:0 0 6px}hr{border:0;border-top:1px dashed #000}.r{display:flex;justify-content:space-between}';
 const SHEET_CSS = '@page{size:landscape}body{font:11px Arial,sans-serif;margin:10mm}h1{font-size:18px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border-bottom:1px solid #aaa;padding:4px 6px;text-align:left}th{background:#eee}.n{text-align:right}.muted{color:#555}';
 
-/** Imprime HTML en un iframe oculto: ticket de 72 mm (comanda, boleta) u hoja completa (tablas). */
+// Datos del negocio de la sesión, para el encabezado de lo que se imprime. Los fija la app al iniciar sesión.
+let currentBusiness: Business = { name: 'Nexus' };
+export function setPrintBusiness(b: Business): void { currentBusiness = b; }
+export const businessName = (): string => currentBusiness.name || 'Nexus';
+
+/** Encabezado del negocio para los comprobantes impresos (nombre, RUT, giro y dirección si existen). */
+export function businessHeaderHtml(): string {
+  const b = currentBusiness;
+  const line = (s?: string) => (s ? `<div>${esc(s)}</div>` : '');
+  return `<h1>${esc(b.name || 'Nexus')}</h1>${line(b.razonSocial && b.razonSocial !== b.name ? b.razonSocial : undefined)}${line(b.rut ? `RUT ${b.rut}` : undefined)}${line(b.giro)}${line([b.direccion, b.comuna].filter(Boolean).join(', '))}${line(b.phone ? `Tel. ${b.phone}` : undefined)}`;
+}
+
+/** Imprime HTML en un iframe oculto: ticket de 72 mm (comanda, comprobante) u hoja completa (tablas). */
 export function printHtml(html: string, page: 'ticket' | 'sheet' = 'ticket'): void {
   const frame = document.createElement('iframe');
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
@@ -53,7 +65,7 @@ export function printHtml(html: string, page: 'ticket' | 'sheet' = 'ticket'): vo
   setTimeout(() => frame.remove(), 2000);
 }
 
-export function comandaHtml(t: Ticket, business = 'Nexus'): string {
+export function comandaHtml(t: Ticket, business = businessName()): string {
   const lines = t.lines.map((l) => `<div class="r"><span>${l.quantity} × ${esc(l.name)}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>`).join('');
   return `<h1>${esc(business)} · COMANDA #${t.number}</h1><div>${esc(fmtDateTime(t.createdAt))}</div><hr>
     <div><b>${esc(t.customerName)}</b></div>${t.phone ? `<div>Tel: ${esc(t.phone)}</div>` : ''}<div>Canal: ${esc(CHANNEL_LABEL[t.channel])}</div>
@@ -65,7 +77,7 @@ export function comandaHtml(t: Ticket, business = 'Nexus'): string {
  * Estado de cuenta de convenio: cada compra con sus productos, los abonos y el saldo,
  * para que el cliente revise lo que se le cobra antes de pagar.
  */
-export function estadoCuentaHtml(b: ClientBalance, business = 'Nexus'): string {
+export function estadoCuentaHtml(b: ClientBalance, business = businessName()): string {
   const small = (s: string) => `<div style="color:#444;font-size:11px">${s}</div>`;
   const sales = [...b.sales].reverse().map((s) => {
     const items = s.lines.map((l) => `<div class="r"><span>${l.quantity} × ${esc(l.name)}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>${l.quantity > 1 ? small(`&nbsp;&nbsp;${formatClp(l.unitPriceClp)} c/u`) : ''}`).join('');
@@ -88,7 +100,7 @@ export function estadoCuentaHtml(b: ClientBalance, business = 'Nexus'): string {
 const STOCK_CHANNEL_LABEL = { all: 'Total (caja + online)', physical: 'Caja', online: 'Online' } as const;
 
 /** Tarjeta de existencia lista para imprimir en hoja: del movimiento más antiguo al más nuevo, con saldo. */
-export function stockCardHtml(card: StockCard, range: { from?: string; to?: string } = {}, business = 'Nexus'): string {
+export function stockCardHtml(card: StockCard, range: { from?: string; to?: string } = {}, business = businessName()): string {
   const money = (v: number | undefined) => (v === undefined ? '' : formatClp(v));
   const rows = [...card.rows].reverse().map((r) =>
     `<tr><td>${esc(fmtDate(r.at))}${r.dateOnly ? '' : ` ${esc(fmtTime(r.at))}`}</td><td>${esc(r.detail)}</td>${card.channel === 'all' ? `<td>${r.channel === 'physical' ? 'Caja' : r.channel === 'online' ? 'Online' : '—'}</td>` : ''}<td class="n">${r.entry || ''}</td><td class="n">${r.exit || ''}</td><td class="n"><b>${r.balance}</b></td><td class="n">${formatClp(r.unitCostClp)}</td><td class="n">${formatClp(r.unitPriceNetClp)}<br><span class="muted">${formatClp(r.unitPriceClp)} c/IVA</span></td><td class="n">${money(r.entryValueClp)}</td><td class="n">${money(r.exitValueClp)}</td></tr>`).join('');

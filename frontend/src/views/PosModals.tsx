@@ -5,7 +5,7 @@ import {
 } from '@nexus/core';
 import type { PosApi } from '../api';
 import { Modal } from '../components';
-import { CHANNEL_LABEL, comandaHtml, fmtDate, fmtDateTime, fmtDuration, fmtTime, printHtml } from '../format';
+import { CHANNEL_LABEL, comandaHtml, fmtDate, fmtDateTime, fmtDuration, fmtTime, printHtml, setPrintBusiness } from '../format';
 import { msg } from '../hooks';
 
 const Err = ({ text }: { text: string | null }) => (text ? <div className="alert" role="alert">{text}</div> : null);
@@ -28,14 +28,14 @@ export function ConsumptionModal({ api, cart, onDone, onClose }: { api: PosApi; 
     return (
       <Modal title="✓ Consumo registrado" onClose={onDone}>
         <div className="receipt"><div className="big"><span>Consumo #{done.number} · al costo</span><strong>{formatClp(done.costClp)}</strong></div></div>
-        <p className="hint">Se descontó del inventario. No se emitió boleta ni se registró ingreso ni ganancia.</p>
+        <p className="hint">Se descontó del inventario. No se registró venta, ingreso ni ganancia.</p>
         <button className="btn primary" onClick={onDone}>Nuevo pedido</button>
       </Modal>
     );
   }
   return (
     <Modal title="🍽️ Registrar consumo" onClose={onClose}>
-      <p className="hint">No es una venta: los productos salen del inventario al costo, sin boleta, sin cobro y sin ganancia.</p>
+      <p className="hint">No es una venta: los productos salen del inventario al costo, sin comprobante, sin cobro y sin ganancia.</p>
       <ul className="plain">
         {cart.lines.map((l) => <li key={l.productId}>{l.quantity} × {l.name} · costo {formatClp(l.costClp)} c/u</li>)}
       </ul>
@@ -56,21 +56,88 @@ export function ConsumptionModal({ api, cart, onDone, onClose }: { api: PosApi; 
   );
 }
 
-/** Pantalla central cuando no hay jornada: elegir cajero, PIN y fondo inicial. */
+/**
+ * Configuración inicial de un negocio nuevo: datos de la empresa (van en el encabezado de los comprobantes)
+ * y el primer cajero, que es quien abrirá la jornada.
+ */
+export function SetupCard({ api, onDone }: { api: PosApi; onDone: () => void }) {
+  const [f, setF] = useState({ name: '', rut: '', razonSocial: '', giro: '', direccion: '', comuna: '', phone: '', cashier: '', pin: '', pin2: '' });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const set = (p: Partial<typeof f>) => setF({ ...f, ...p });
+
+  useEffect(() => {
+    api.rpc.getBusiness().then((b) => setF((cur) => ({
+      ...cur, name: b.name ?? '', rut: b.rut ?? '', razonSocial: b.razonSocial ?? '', giro: b.giro ?? '',
+      direccion: b.direccion ?? '', comuna: b.comuna ?? '', phone: b.phone ?? '',
+    })));
+  }, [api]);
+
+  const save = async () => {
+    if (!f.name.trim()) return setError('Escribe el nombre de tu negocio.');
+    if (!f.cashier.trim()) return setError('Escribe el nombre del primer cajero.');
+    if (!/^\d{4,8}$/.test(f.pin)) return setError('El PIN debe tener de 4 a 8 números.');
+    if (f.pin !== f.pin2) return setError('Los dos PIN no coinciden.');
+    try {
+      setBusy(true);
+      setError(null);
+      await api.rpc.updateBusiness({ name: f.name, rut: f.rut, razonSocial: f.razonSocial, giro: f.giro, direccion: f.direccion, comuna: f.comuna, phone: f.phone });
+      await api.rpc.upsertCashier({ name: f.cashier, pin: f.pin });
+      setPrintBusiness(await api.rpc.getBusiness());
+      onDone();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="gate">
+      <div className="gate-card wide">
+        <h2>Configura tu negocio</h2>
+        <p className="hint">Solo se hace una vez. Estos datos salen en tus comprobantes de venta; los puedes cambiar después en Administración → Mi negocio.</p>
+        <div className="two-col">
+          <label className="field">Nombre del negocio *<input value={f.name} onChange={(e) => set({ name: e.target.value })} /></label>
+          <label className="field">RUT<input value={f.rut} onChange={(e) => set({ rut: e.target.value })} placeholder="76.123.456-0" /></label>
+          <label className="field">Razón social<input value={f.razonSocial} onChange={(e) => set({ razonSocial: e.target.value })} /></label>
+          <label className="field">Giro<input value={f.giro} onChange={(e) => set({ giro: e.target.value })} /></label>
+          <label className="field">Dirección<input value={f.direccion} onChange={(e) => set({ direccion: e.target.value })} /></label>
+          <label className="field">Comuna<input value={f.comuna} onChange={(e) => set({ comuna: e.target.value })} /></label>
+          <label className="field">Teléfono<input value={f.phone} onChange={(e) => set({ phone: e.target.value })} /></label>
+        </div>
+        <h4>Primer cajero</h4>
+        <div className="two-col">
+          <label className="field">Nombre *<input value={f.cashier} onChange={(e) => set({ cashier: e.target.value })} /></label>
+          <span />
+          <label className="field">PIN (4 a 8 números) *<input type="password" inputMode="numeric" autoComplete="off" value={f.pin} onChange={(e) => set({ pin: e.target.value })} /></label>
+          <label className="field">Repite el PIN *<input type="password" inputMode="numeric" autoComplete="off" value={f.pin2} onChange={(e) => set({ pin2: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && save()} /></label>
+        </div>
+        <Err text={error} />
+        <button className="btn primary" disabled={busy} onClick={save}>Guardar y continuar</button>
+      </div>
+    </div>
+  );
+}
+
+/** Pantalla central cuando no hay jornada: elegir cajero, PIN y fondo inicial. Si el negocio es nuevo, primero lo configura. */
 export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => void }) {
   const [cashiers, setCashiers] = useState<Omit<Cashier, 'pin'>[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [cashierId, setCashierId] = useState('');
   const [pin, setPin] = useState('');
   const [cash, setCash] = useState('0');
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.rpc.listCashiers().then((c) => {
-      const active = c.filter((x) => x.active);
-      setCashiers(active);
-      setCashierId(active[0]?.id ?? '');
-    });
-  }, [api]);
+  const load = () => api.rpc.listCashiers().then((c) => {
+    const active = c.filter((x) => x.active);
+    setCashiers(active);
+    setCashierId(active[0]?.id ?? '');
+    setLoaded(true);
+  });
+  useEffect(() => { load(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loaded && cashiers.length === 0) return <SetupCard api={api} onDone={load} />;
 
   const open = async () => {
     try {
@@ -100,7 +167,6 @@ export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => 
         </label>
         <Err text={error} />
         <button className="btn primary" disabled={!cashierId || !pin} onClick={open}>Abrir jornada</button>
-        <p className="hint">Demo: cajero «Cajero 1», PIN 1234.</p>
       </div>
     </div>
   );
@@ -212,7 +278,7 @@ export function HoldModal(props: { summary: string; defaultName: string; onSave:
       </label>
       <div className="radio-cards">
         <label className={!d.paid ? 'on' : ''}><input type="radio" checked={!d.paid} onChange={() => set({ paid: false })} /> <b>Pendiente de pago</b><small>Se cobra cuando el cliente retire.</small></label>
-        <label className={d.paid ? 'on' : ''}><input type="radio" checked={d.paid} onChange={() => set({ paid: true })} /> <b>Ya pagó</b><small>Se emite la boleta ahora.</small></label>
+        <label className={d.paid ? 'on' : ''}><input type="radio" checked={d.paid} onChange={() => set({ paid: true })} /> <b>Ya pagó</b><small>Se cobra y se registra la venta ahora.</small></label>
       </div>
       {d.paid && (
         <label className="field">Medio de pago

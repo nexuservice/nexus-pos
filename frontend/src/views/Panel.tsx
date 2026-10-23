@@ -32,8 +32,8 @@ export function PanelView({ api, branchId }: { api: PosApi; branchId: string | n
   const exportCsv = async () => {
     const sales = await api.rpc.listSales({ from, to, limit: 10_000 });
     download(`ventas_${from}_${to}.csv`, toCsv([
-      ['N°', 'Folio', 'Fecha', 'Cajero', 'Canal', 'Medio de pago', 'Subtotal', 'Descuento', 'Total', 'Estado'],
-      ...sales.map((s) => [s.number, s.folio, s.paidAt, s.cashierName ?? '', s.channel === 'online' ? 'Online' : 'Caja', PAY_METHOD_LABEL[s.method], s.subtotalClp, s.discountClp, s.totalClp, s.status === 'voided' ? 'Anulada' : 'Completada']),
+      ['Pedido N°', 'Fecha', 'Cajero', 'Canal', 'Medio de pago', 'Subtotal', 'Descuento', 'Total', 'Estado'],
+      ...sales.map((s) => [s.number, s.paidAt, s.cashierName ?? '', s.channel === 'online' ? 'Online' : 'Caja', PAY_METHOD_LABEL[s.method], s.subtotalClp, s.discountClp, s.totalClp, s.status === 'voided' ? 'Anulada' : 'Completada']),
     ]), 'text/csv;charset=utf-8');
   };
 
@@ -61,8 +61,8 @@ export function PanelView({ api, branchId }: { api: PosApi; branchId: string | n
       {r && k && (
         <>
           <div className="kpis">
-            <Kpi icon="🧾" label="Ventas / boletas" tone="blue" value={String(k.count)} delta={r.deltas.count} sub={k.folioFrom ? `folios ${k.folioFrom}–${k.folioTo}` : 'sin folios'} />
-            <Kpi icon="💰" label="Ingresos" tone="green" value={formatClp(k.revenueClp)} delta={r.deltas.revenueClp} sub="total facturado" />
+            <Kpi icon="🧾" label="Ventas" tone="blue" value={String(k.count)} delta={r.deltas.count} sub="pedidos cobrados" />
+            <Kpi icon="💰" label="Ingresos" tone="green" value={formatClp(k.revenueClp)} delta={r.deltas.revenueClp} sub="total vendido" />
             <Kpi icon="🎫" label="Ticket promedio" tone="amber" value={formatClp(k.avgTicketClp)} delta={r.deltas.avgTicketClp} sub="por transacción" />
             <Kpi icon="📈" label="Utilidad bruta" tone="violet" value={formatClp(k.profitClp)} sub={`margen ${k.marginPct}%`} />
             <Kpi icon="📦" label="Ítems vendidos" value={String(k.items)} delta={r.deltas.items} sub="unidades" />

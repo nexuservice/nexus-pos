@@ -5,16 +5,18 @@ import {
 } from '@nexus/core';
 import type { PosApi } from '../api';
 import { DebtModal } from '../components';
+import { BusinessSection } from './Business';
+import { ReceiveSection } from './Receive';
 import { PurchaseModal, PurchasesSection } from './Purchases';
 import { PriceModal, StockCardModal } from './StockCard';
 import { fmtDateTime } from '../format';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
 
-type Section = 'products' | 'purchases' | 'clients' | 'cashiers' | 'promos' | 'inventory' | 'shifts';
+type Section = 'products' | 'receive' | 'purchases' | 'clients' | 'cashiers' | 'promos' | 'inventory' | 'shifts' | 'business';
 const SECTIONS: [Section, string][] = [
-  ['products', '📦 Productos'], ['purchases', '🧾 Compras'], ['clients', '👥 Clientes'], ['cashiers', '👤 Cajeros'], ['promos', '🎫 Descuentos y promociones'],
-  ['inventory', '📊 Inventario'], ['shifts', '🕐 Jornadas'],
+  ['products', '📦 Productos'], ['receive', '📥 Ingreso por escaneo'], ['purchases', '🧾 Compras'], ['clients', '👥 Clientes'], ['cashiers', '👤 Cajeros'],
+  ['promos', '🎫 Descuentos y promociones'], ['inventory', '📊 Inventario'], ['shifts', '🕐 Jornadas'], ['business', '🏪 Mi negocio'],
 ];
 
 const Err = ({ text }: { text: string | null }) => (text ? <div className="alert" role="alert">{text}</div> : null);
@@ -28,6 +30,8 @@ export function AdminView({ api, branchId }: { api: PosApi; branchId: string | n
       </nav>
       <div className="admin-body">
         {section === 'products' && <Products api={api} branchId={branchId} />}
+        {section === 'receive' && <ReceiveSection api={api} branchId={branchId} />}
+        {section === 'business' && <BusinessSection api={api} />}
         {section === 'purchases' && <PurchasesSection api={api} branchId={branchId} />}
         {section === 'clients' && <Clients api={api} />}
         {section === 'cashiers' && <Cashiers api={api} />}

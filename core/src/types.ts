@@ -173,7 +173,6 @@ export interface Sale {
   voidReason?: string;
   createdAt: string;
   paidAt: string;
-  documentId: string | null;
 }
 
 /** Cambio del precio de venta de un producto (corrección o alza). Las ventas ya hechas conservan el precio al que se vendieron. */
@@ -278,24 +277,13 @@ export interface Consumption {
   createdAt: string;
 }
 
-export interface TaxDocument {
-  id: string;
-  saleId: string;
-  dteType: 39 | 33;
-  folio: number;
-  xml: string;
-  /** Sin firma ni timbre: "draft" hasta integrarse con un certificador SII. */
-  siiStatus: 'draft';
-  issuedAt: string;
-}
-
 export interface StockMovement {
   id: string;
   branchId: string;
   productId: string;
   channel: Channel;
   delta: number;
-  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption' | 'purchase';
+  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption' | 'purchase' | 'initial';
   refId?: string;
   /** Costo neto unitario y precio de venta unitario (con IVA) vigentes en ese movimiento: con la inflación van cambiando. */
   unitCostClp?: number;
@@ -354,13 +342,38 @@ export interface StockCell {
   reserved: number;
 }
 
-export interface Emisor {
-  rut: string;
-  razonSocial: string;
-  giro: string;
-  direccion: string;
-  comuna: string;
+/**
+ * Datos del negocio, para el encabezado de los comprobantes internos.
+ * Nexus es un sistema de control interno: el comprobante de venta NO es un documento tributario.
+ */
+export interface Business {
+  /** Nombre comercial. */
+  name: string;
+  rut?: string;
+  razonSocial?: string;
+  giro?: string;
+  direccion?: string;
+  comuna?: string;
+  phone?: string;
 }
+
+/** Ingreso rápido de un producto por escaneo (sin proveedor ni documento). */
+export interface ReceiveInput {
+  barcode: string;
+  quantity?: number;
+  /** Solo para crear un producto nuevo. */
+  name?: string;
+  category?: string;
+  /** Costo unitario neto. */
+  costClp?: number | null;
+  /** Precio de venta NETO unitario (el sistema calcula el valor con IVA). */
+  priceNetClp?: number | null;
+  published?: boolean;
+  channel?: Channel;
+}
+
+/** Texto legal que acompaña a todo comprobante de venta. */
+export const INTERNAL_RECEIPT_NOTICE = 'Comprobante de venta interno · No válido como documento tributario';
 
 export interface PaymentEvent {
   paymentId: string;
@@ -444,8 +457,6 @@ export interface Kpis {
   marginPct: number;
   voidedCount: number;
   voidedClp: number;
-  folioFrom: number | null;
-  folioTo: number | null;
 }
 
 export interface SalesReport {
@@ -478,8 +489,9 @@ export interface EngineState {
   carts: Record<string, Cart>;
   payments: Record<string, Payment>;
   sales: Sale[];
-  documents: TaxDocument[];
   movements: StockMovement[];
+  /** Datos del negocio. Opcional: las bases guardadas antes de esta función no lo traen. */
+  business?: Business;
   /** Abonos a deudas de convenio. Opcional: las bases guardadas antes de esta función no lo traen. */
   creditPayments?: CreditPayment[];
   /** Consumos propios. Opcional: las bases guardadas antes de esta función no lo traen. */
@@ -488,8 +500,6 @@ export interface EngineState {
   purchases?: Purchase[];
   /** Historial de cambios de precio. Opcional: las bases guardadas antes de esta función no lo traen. */
   priceChanges?: PriceChange[];
-  nextFolio: number;
-  lastFolio: number;
   saleSeq: number;
   ticketSeq: number;
   seq: number;

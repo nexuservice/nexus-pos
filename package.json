@@ -1,13 +1,15 @@
 {
   "name": "nexus",
   "private": true,
-  "version": "0.1.0",
-  "description": "Nexus: punto de venta + tienda online para negocios en Chile",
+  "version": "0.2.0",
+  "description": "Nexus: control de inventario, ventas y caja para negocios en Chile",
   "workspaces": ["core", "backend", "frontend"],
   "scripts": {
+    "dev:local": "node scripts/dev.mjs",
     "dev:api": "npm run dev -w backend",
     "dev:web": "npm run dev -w frontend",
-    "test": "npm run test -w core",
+    "cliente": "npm run cliente -w backend --",
+    "test": "npm run test -w core && npm run test -w backend",
     "typecheck": "tsc -p core --noEmit && tsc -p backend --noEmit && tsc -p frontend --noEmit",
     "build": "npm run build -w frontend"
   },

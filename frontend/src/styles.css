@@ -249,3 +249,17 @@ div.ok { background: var(--ok); } div.bad { background: var(--bad); }
   .two-col, .radio-cards { grid-template-columns: 1fr; }
   .hbar { grid-template-columns: 90px 1fr auto; }
 }
+
+/* ---------- acceso, configuración inicial e ingreso por escaneo ---------- */
+.login-brand { justify-content: center; font-size: 26px; margin-bottom: 4px; }
+.gate-card.wide { width: min(640px, 100%); }
+.gate-card h4 { margin-top: 4px; }
+.empty-state { background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); padding: 24px; text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.empty-state h3 { margin: 0; }
+.empty-state p { margin: 0; color: var(--muted); max-width: 46ch; }
+.scan-bar { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.scan-bar .search { font-size: 1.15rem; padding: 14px 16px; border: 2px solid var(--brand); }
+.section-title { margin: 20px 0 8px; font-size: 1rem; }
+.created { border-color: var(--ok); }
+.created code { font-size: 1.05rem; user-select: all; }
+a.link { color: var(--muted); text-decoration: underline; font-size: 13px; text-align: center; }

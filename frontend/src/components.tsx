@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Cart, ClientBalance, ClientWithDebt, Customer, PayMethod } from '@nexus/core';
-import { PAY_METHODS, PAY_METHOD_LABEL, formatClp } from '@nexus/core';
+import { INTERNAL_RECEIPT_NOTICE, PAY_METHODS, PAY_METHOD_LABEL, formatClp } from '@nexus/core';
 import type { PayPhase, SaleDetail } from './hooks';
 import type { PosApi } from './api/types';
-import { estadoCuentaHtml, fmtDateTime, printHtml } from './format';
+import { businessHeaderHtml, esc, estadoCuentaHtml, fmtDateTime, printHtml } from './format';
 import { msg } from './hooks';
 
 export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; xwide?: boolean }) {
@@ -323,7 +323,7 @@ export function PaymentModal(props: {
             <div className="ok" aria-hidden>✓</div>
             <h3>Pago aprobado</h3>
             <Receipt sale={sale} />
-            <p className="hint">Documento sin firma ni timbre: modo demostración (no se envía al SII).</p>
+            <p className="hint">{INTERNAL_RECEIPT_NOTICE}</p>
             <div className="row-btns">
               <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Imprimir</button>
               <button className="btn primary" onClick={props.onNew}>Nueva venta</button>
@@ -352,7 +352,7 @@ export function PaymentModal(props: {
 export function Receipt({ sale }: { sale: SaleDetail }) {
   return (
     <div className="receipt">
-      <div><span>Boleta electrónica N°</span><strong>{sale.document?.folio ?? '—'}</strong></div>
+      <div><span>Comprobante de venta interno</span><strong>Pedido #{sale.number}</strong></div>
       {sale.customer.name && <div><span>Cliente</span><span>{sale.customer.name}</span></div>}
       {sale.discountClp > 0 && <div><span>Descuento ({sale.promotionCode})</span><span>−{formatClp(sale.discountClp)}</span></div>}
       <div><span>Neto</span><span>{formatClp(sale.netClp)}</span></div>
@@ -369,10 +369,14 @@ export function Receipt({ sale }: { sale: SaleDetail }) {
   );
 }
 
+/** Comprobante de venta interno: control del negocio, NO es un documento tributario. */
 export function printReceipt(sale: SaleDetail): void {
-  const lines = sale.lines.map((l) => `<div class="r"><span>${l.quantity} × ${l.name}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>`).join('');
-  printHtml(`<h1>Nexus · Boleta N° ${sale.document?.folio ?? '—'}</h1><hr>${lines}<hr>
+  const lines = sale.lines.map((l) => `<div class="r"><span>${l.quantity} × ${esc(l.name)}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>`).join('');
+  printHtml(`${businessHeaderHtml()}<hr><div><b>COMPROBANTE DE VENTA INTERNO</b></div><div>Pedido #${sale.number} · ${esc(fmtDateTime(sale.paidAt))}</div>
+    ${sale.customer.name ? `<div>Cliente: ${esc(sale.customer.name)}</div>` : ''}<hr>${lines}<hr>
     ${sale.discountClp ? `<div class="r"><span>Descuento</span><span>−${formatClp(sale.discountClp)}</span></div>` : ''}
     <div class="r"><span>Neto</span><span>${formatClp(sale.netClp)}</span></div><div class="r"><span>IVA 19%</span><span>${formatClp(sale.ivaClp)}</span></div>
-    <div class="r"><b>Total</b><b>${formatClp(sale.totalClp)}</b></div><hr><div>Documento de demostración sin timbre SII</div>`);
+    <div class="r"><b>Total</b><b>${formatClp(sale.totalClp)}</b></div>
+    ${sale.method === 'cash' && sale.receivedClp !== undefined ? `<div class="r"><span>Recibido</span><span>${formatClp(sale.receivedClp)}</span></div><div class="r"><b>Vuelto</b><b>${formatClp(sale.changeClp ?? 0)}</b></div>` : ''}
+    <hr><div style="text-align:center;font-size:11px">${esc(INTERNAL_RECEIPT_NOTICE)}</div>`);
 }

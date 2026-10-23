@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { PAY_METHOD_LABEL, formatClp, type Consumption, type Sale } from '@nexus/core';
+import { INTERNAL_RECEIPT_NOTICE, PAY_METHOD_LABEL, formatClp, type Consumption, type Sale } from '@nexus/core';
 import type { PosApi } from '../api';
 import { Modal, Receipt, printReceipt } from '../components';
 import { download, fmtDate, fmtTime, toCsv } from '../format';
 import { msg, type SaleDetail } from '../hooks';
 
-type Row = Sale & { folio: number | null };
+type Row = Sale;
 
 export function HistoryView({ api, branchId }: { api: PosApi; branchId: string | null }) {
   const [rows, setRows] = useState<Row[]>([]);
@@ -14,7 +14,6 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [detail, setDetail] = useState<SaleDetail | null>(null);
-  const [showXml, setShowXml] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -28,7 +27,7 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
   const done = rows.filter((r) => r.status === 'completed');
   const total = done.reduce((s, r) => s + r.totalClp, 0);
 
-  const open = async (id: string) => { setShowXml(false); setDetail(await api.rpc.getSale(id)); };
+  const open = async (id: string) => { setDetail(await api.rpc.getSale(id)); };
   const voidSale = async (s: SaleDetail) => {
     const reason = prompt('Motivo de la anulación (opcional):');
     if (reason === null) return;
@@ -48,8 +47,8 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
         <h1>🧾 Historial de ventas</h1>
         <div className="head-actions">
           <button className="btn ghost sm" onClick={() => download('historial.csv', toCsv([
-            ['N°', 'Folio', 'Fecha', 'Hora', 'Cajero', 'Canal', 'Medio', 'Total', 'Estado'],
-            ...rows.map((r) => [r.number, r.folio, fmtDate(r.paidAt), fmtTime(r.paidAt), r.cashierName ?? '', r.channel === 'online' ? 'Online' : 'Caja', PAY_METHOD_LABEL[r.method], r.totalClp, r.status === 'voided' ? 'Anulada' : 'Completada']),
+            ['Pedido N°', 'Fecha', 'Hora', 'Cajero', 'Canal', 'Medio', 'Total', 'Estado'],
+            ...rows.map((r) => [r.number, fmtDate(r.paidAt), fmtTime(r.paidAt), r.cashierName ?? '', r.channel === 'online' ? 'Online' : 'Caja', PAY_METHOD_LABEL[r.method], r.totalClp, r.status === 'voided' ? 'Anulada' : 'Completada']),
           ]), 'text/csv;charset=utf-8')}>📗 Excel (CSV)</button>
           <button className="btn ghost sm" onClick={() => download('historial.json', JSON.stringify(rows, null, 2), 'application/json')}>🧾 JSON</button>
         </div>
@@ -68,14 +67,14 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
       <div className="table-wrap"><table>
-        <thead><tr><th>Fecha</th><th>Hora</th><th>Folio</th><th>Canal</th><th>Medio</th><th>Total</th><th>Estado</th><th /></tr></thead>
+        <thead><tr><th>Fecha</th><th>Hora</th><th>Pedido</th><th>Canal</th><th>Medio</th><th>Total</th><th>Estado</th><th /></tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className={r.status === 'voided' ? 'voided' : ''}>
-              <td>{fmtDate(r.paidAt)}</td><td>{fmtTime(r.paidAt)}</td><td>#{r.folio ?? r.number}</td><td>{r.channel === 'online' ? 'Online' : r.cashierName ?? 'Caja'}</td>
+              <td>{fmtDate(r.paidAt)}</td><td>{fmtTime(r.paidAt)}</td><td>#{r.number}</td><td>{r.channel === 'online' ? 'Online' : r.cashierName ?? 'Caja'}</td>
               <td>{PAY_METHOD_LABEL[r.method]}</td><td>{formatClp(r.totalClp)}</td>
               <td><span className={'pill ' + (r.status === 'completed' ? 'ok' : 'bad')}>{r.status === 'completed' ? 'completada' : 'anulada'}</span></td>
-              <td><button className="btn ghost sm" onClick={() => open(r.id)}>Ver boleta</button></td>
+              <td><button className="btn ghost sm" onClick={() => open(r.id)}>Ver comprobante</button></td>
             </tr>
           ))}
           {!rows.length && <tr><td colSpan={8} className="empty">Sin ventas</td></tr>}
@@ -104,13 +103,12 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
       </table></div>
 
       {detail && (
-        <Modal title={`Boleta N° ${detail.document?.folio ?? '—'}`} wide onClose={() => setDetail(null)}>
+        <Modal title={`Comprobante de venta interno · Pedido #${detail.number}`} wide onClose={() => setDetail(null)}>
           <Receipt sale={detail} />
           <ul className="items">{detail.lines.map((l) => <li key={l.productId}>{l.quantity} × {l.name} <b>{formatClp(l.unitPriceClp * l.quantity)}</b></li>)}</ul>
-          {detail.status === 'voided' && <div className="alert">Venta anulada{detail.voidReason ? `: ${detail.voidReason}` : ''}. Para el SII corresponde emitir una nota de crédito electrónica.</div>}
-          {showXml && detail.document && <pre className="xml">{detail.document.xml.replace(/></g, '>\n<')}</pre>}
+          {detail.status === 'voided' && <div className="alert">Venta anulada{detail.voidReason ? `: ${detail.voidReason}` : ''}.</div>}
+          <p className="hint">{INTERNAL_RECEIPT_NOTICE}</p>
           <div className="row-btns">
-            {detail.document && <button className="btn ghost" onClick={() => setShowXml(!showXml)}>{showXml ? 'Ocultar XML' : 'Ver XML (DTE 39)'}</button>}
             <button className="btn ghost" onClick={() => printReceipt(detail)}>🖨 Imprimir</button>
             {detail.status === 'completed' && <button className="btn danger" onClick={() => voidSale(detail)}>Anular venta</button>}
             <button className="btn primary" onClick={() => setDetail(null)}>Cerrar</button>

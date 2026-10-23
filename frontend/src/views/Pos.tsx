@@ -26,7 +26,6 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
   const [modal, setModal] = useState<ModalKind>(null);
   const [closedShift, setClosedShift] = useState<Shift | null>(null);
   const [tickets, setTickets] = useState(0);
-  const [folio, setFolio] = useState({ current: 0, remaining: 0 });
   const [branchName, setBranchName] = useState('');
   const [query, setQuery] = useState('');
   const [code, setCode] = useState('');
@@ -37,7 +36,6 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
 
   const refreshMeta = useCallback(async () => {
     setTickets((await api.rpc.listTickets()).length);
-    setFolio({ current: await api.rpc.currentFolio(), remaining: await api.rpc.foliosRemaining() });
     await shift.refresh();
   }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -111,13 +109,10 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
             </div>
           )}
           <div className="pos-bar-actions">
-            <Dropdown label="Folios" align="right">{() => (
-              <div className="dd-info"><div><span>Folio actual</span><b>{folio.current}</b></div><div><span>Folios restantes</span><b>{folio.remaining}</b></div></div>
-            )}</Dropdown>
             <Dropdown label={<>🟢 Jornada</>} align="right" className="green">{(close) => (
               <>
                 <button onClick={() => { close(); go('history'); }}>🧾 Historial</button>
-                <button onClick={async () => { close(); download('boletas.json', JSON.stringify(await api.rpc.listSales({ shiftId: si.shift.id }), null, 2), 'application/json'); }}>JSON de boletas</button>
+                <button onClick={async () => { close(); download('ventas-jornada.json', JSON.stringify(await api.rpc.listSales({ shiftId: si.shift.id }), null, 2), 'application/json'); }}>JSON de ventas</button>
                 <button onClick={() => { close(); setModal('shift-info'); }}>ℹ️ Info Jornada</button>
                 <button onClick={() => { close(); setModal('shift-close'); }}>🔒 Cerrar Jornada</button>
               </>
@@ -140,6 +135,13 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
           ))}
         </div>
         {c.error && <div className="alert" role="alert">{c.error}</div>}
+        {c.catalog.length === 0 && (
+          <div className="empty-state">
+            <h3>Aún no tienes productos</h3>
+            <p>Para empezar a vender, carga tu inventario: ve a <b>Administración → Ingreso por escaneo</b> y escanea tus productos.</p>
+            <button className="btn primary" onClick={() => go('admin')}>Ir a Administración</button>
+          </div>
+        )}
         <div className="grid">
           {shown.map((p) => (
             <button key={p.id} className="tile" disabled={p.available <= 0} onClick={() => c.add(p.barcode)}>

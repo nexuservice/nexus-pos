@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts"
+    "start": "tsx src/server.ts",
+    "cliente": "tsx src/cli.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@nexus/core": "*",

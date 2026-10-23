@@ -1,17 +1,16 @@
 import type {
-  AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, Emisor, EngineState,
+  AppliedPromo, Branch, Business, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
-  PriceChange, Purchase, PurchaseInput, PurchaseLine, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
+  PriceChange, Purchase, PurchaseInput, PurchaseLine, ReceiveInput, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, Ticket, TicketChannel,
 } from './types';
 import { PAY_METHODS, PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, isTerminalMethod } from './types';
 import { addIva, formatClp, splitIva } from './money';
 import { isValidRut, normalizeRut } from './rut';
-import { buildBoletaXml } from './billing';
 import { buildSalesReport, santiagoDay } from './reports';
 
 export type ErrorCode =
   | 'NOT_FOUND' | 'INVALID_QTY' | 'OUT_OF_STOCK' | 'CART_NOT_OPEN' | 'EMPTY_CART' | 'INVALID_RUT'
-  | 'CUSTOMER_REQUIRED' | 'METHOD_NOT_ALLOWED' | 'NO_FOLIOS' | 'INSUFFICIENT_STOCK' | 'NO_SHIFT' | 'SHIFT_OPEN'
+  | 'CUSTOMER_REQUIRED' | 'METHOD_NOT_ALLOWED' | 'INSUFFICIENT_STOCK' | 'NO_SHIFT' | 'SHIFT_OPEN'
   | 'BAD_PIN' | 'INVALID_AMOUNT' | 'PROMO_INVALID' | 'INVALID_DATA' | 'NOT_ALLOWED';
 
 export class PosError extends Error {
@@ -23,17 +22,8 @@ export class PosError extends Error {
 
 export interface EngineOptions {
   now?: () => Date;
-  emisor?: Emisor;
   terminal?: string;
 }
-
-export const DEFAULT_EMISOR: Emisor = {
-  rut: '11111111-1',
-  razonSocial: 'Nexus Demo SpA',
-  giro: 'Comercio al por menor',
-  direccion: 'Av. Providencia 1234',
-  comuna: 'Providencia',
-};
 
 type Listener = (e: PaymentEvent) => void;
 const clone = <T>(v: T): T => structuredClone(v);
@@ -46,7 +36,6 @@ const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 export class PosEngine {
   private state: EngineState;
   private readonly now: () => Date;
-  private readonly emisor: Emisor;
   private readonly terminal: string;
   private readonly eventLog = new Map<string, PaymentEvent[]>();
   private readonly listeners = new Map<string, Set<Listener>>();
@@ -57,8 +46,8 @@ export class PosEngine {
     this.state.consumptions ??= [];
     this.state.purchases ??= [];
     this.state.priceChanges ??= [];
+    this.state.business ??= { name: 'Mi negocio' };
     this.now = opts.now ?? (() => new Date());
-    this.emisor = opts.emisor ?? DEFAULT_EMISOR;
     this.terminal = opts.terminal ?? 'CAJA1';
   }
 
@@ -256,6 +245,7 @@ export class PosEngine {
       const doc = buy ? `${PURCHASE_DOC_LABEL[buy.docType]} N° ${buy.docNumber}` : '';
       switch (m.reason) {
         case 'purchase': return buy ? `Compra · ${doc} · ${buy.supplierName}` : 'Compra';
+        case 'initial': return 'Ingreso de inventario';
         case 'sale': return sale ? `Venta${sale.channel === 'online' ? ' online' : ''} #${sale.number}` : 'Venta';
         case 'consumption': return cons ? `Consumo #${cons.number}${cons.note ? ` · ${cons.note}` : ''}` : 'Consumo';
         case 'return': return sale ? `Anulación de venta #${sale.number}` : cons ? `Anulación de consumo #${cons.number}` : buy ? `Anulación de compra · ${doc}` : 'Devolución';
@@ -668,8 +658,6 @@ export class PosEngine {
       if (!client || !client.name || !client.rut) throw new PosError('CUSTOMER_REQUIRED', 'El convenio requiere un cliente registrado con nombre y RUT');
       if (!client.creditAuthorized) throw new PosError('METHOD_NOT_ALLOWED', `${client.name} no está autorizado para pagar con convenio`);
     }
-    if (this.foliosRemaining() === 0) throw new PosError('NO_FOLIOS', 'No quedan folios de boleta disponibles');
-
     let received: number | undefined;
     let change: number | undefined;
     if (method === 'cash') {
@@ -726,26 +714,13 @@ export class PosEngine {
     }
 
     const shift = cart.channel === 'physical' ? this.openShiftRef() : undefined;
-    let documentId: string | null = null;
-    if (this.state.nextFolio <= this.state.lastFolio) {
-      const folio = this.state.nextFolio++;
-      const doc: TaxDocument = {
-        id: this.id('doc'), saleId, dteType: 39, folio, siiStatus: 'draft', issuedAt: iso,
-        xml: buildBoletaXml({
-          folio, date: santiagoDay(iso), emisor: this.emisor, receptor: cart.customer, lines,
-          discountClp: cart.discountClp, totalClp: cart.totalClp,
-        }),
-      };
-      this.state.documents.push(doc);
-      documentId = doc.id;
-    }
 
     const sale: Sale = {
       id: saleId, number: ++this.state.saleSeq, branchId: cart.branchId, channel: cart.channel, shiftId: shift?.id ?? null,
       cashierName: shift?.cashierName, customer: clone(cart.customer), lines, subtotalClp: cart.subtotalClp,
       discountClp: cart.discountClp, promotionCode: cart.promotion?.code, totalClp: cart.totalClp, netClp, ivaClp,
       method: payment.method, provider: payment.provider, authCode: outcome.authCode, receivedClp: payment.receivedClp,
-      changeClp: payment.changeClp, status: 'completed', createdAt: iso, paidAt: iso, documentId,
+      changeClp: payment.changeClp, status: 'completed', createdAt: iso, paidAt: iso,
     };
     this.state.sales.push(sale);
     payment.status = 'approved';
@@ -999,22 +974,13 @@ export class PosEngine {
   }
 
   // ---------- ventas, historial, anulación ----------
-  foliosRemaining(): number {
-    return Math.max(0, this.state.lastFolio - this.state.nextFolio + 1);
-  }
-
-  currentFolio(): number {
-    return this.state.nextFolio;
-  }
-
-  getSale(id: string): Sale & { document: TaxDocument | null } {
+  getSale(id: string): Sale {
     const s = this.state.sales.find((x) => x.id === id);
     if (!s) throw new PosError('NOT_FOUND', 'Venta no existe');
-    const document = this.state.documents.find((d) => d.id === s.documentId) ?? null;
-    return clone({ ...s, document });
+    return clone(s);
   }
 
-  listSales(filter: SalesFilter = {}): (Sale & { folio: number | null })[] {
+  listSales(filter: SalesFilter = {}): Sale[] {
     const f = filter ?? {};
     const rows = this.state.sales
       .filter((s) =>
@@ -1024,13 +990,10 @@ export class PosEngine {
         (!f.to || santiagoDay(s.paidAt) <= f.to))
       .slice(-(f.limit ?? 100))
       .reverse();
-    return clone(rows.map((s) => ({ ...s, folio: this.state.documents.find((d) => d.id === s.documentId)?.folio ?? null })));
+    return clone(rows);
   }
 
-  /**
-   * Anula una venta y devuelve el stock. En la realidad, una boleta emitida se anula con una
-   * nota de crédito electrónica (DTE 61); aquí queda marcada para emitirla con el certificador.
-   */
+  /** Anula una venta y devuelve el stock. La venta queda marcada como anulada y no suma en los reportes. */
   voidSale(saleId: string, reason?: string | null): Sale {
     const sale = this.state.sales.find((s) => s.id === saleId);
     if (!sale) throw new PosError('NOT_FOUND', 'Venta no existe');
@@ -1128,9 +1091,87 @@ export class PosEngine {
   // ---------- reportes ----------
   salesReport(from: string, to: string, branchId?: string | null): SalesReport {
     return buildSalesReport(
-      this.state.sales.filter((s) => !branchId || s.branchId === branchId), (id) => this.state.documents.find((d) => d.id === id)?.folio ?? null, from, to,
+      this.state.sales.filter((s) => !branchId || s.branchId === branchId), from, to,
       (this.state.consumptions ?? []).filter((c) => !branchId || c.branchId === branchId),
     );
+  }
+
+  // ---------- datos del negocio ----------
+  getBusiness(): Business {
+    return clone(this.state.business!);
+  }
+
+  /** Datos que salen en el encabezado de los comprobantes. El RUT, si se indica, se valida y normaliza. */
+  updateBusiness(input: Partial<Business>): Business {
+    const name = (input.name ?? this.state.business!.name ?? '').trim();
+    if (!name) throw new PosError('INVALID_DATA', 'El nombre del negocio es obligatorio');
+    const text = (v: string | undefined) => v?.trim() || undefined;
+    let rut = text(input.rut);
+    if (rut) {
+      if (!isValidRut(rut)) throw new PosError('INVALID_RUT', 'RUT del negocio inválido');
+      rut = normalizeRut(rut);
+    }
+    this.state.business = {
+      name, rut, razonSocial: text(input.razonSocial), giro: text(input.giro), direccion: text(input.direccion),
+      comuna: text(input.comuna), phone: text(input.phone),
+    };
+    return clone(this.state.business);
+  }
+
+  // ---------- ingreso rápido de inventario (escaneo) ----------
+  /** Busca un producto por código de barras, SKU o id. */
+  findProduct(code: string): Product | null {
+    const c = (code ?? '').trim();
+    const p = c ? this.product(c) : undefined;
+    return p ? clone(p) : null;
+  }
+
+  /**
+   * Ingreso rápido por escaneo, sin proveedor ni documento (p. ej. el inventario inicial de un negocio nuevo).
+   * Si el código no existe crea el producto (nombre y precio neto obligatorios); si existe suma stock y, si se indica,
+   * actualiza costo (promedio ponderado) y precio. Para compras con factura usar `registerPurchase`.
+   */
+  receiveStock(branchId: string, input: ReceiveInput): { product: Product; created: boolean; qty: number } {
+    if (!this.state.branches.some((b) => b.id === branchId)) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    const barcode = (input.barcode ?? '').trim();
+    if (!barcode) throw new PosError('INVALID_DATA', 'Falta el código de barras');
+    const quantity = input.quantity ?? 1;
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 100_000) throw new PosError('INVALID_QTY', 'La cantidad debe ser un entero entre 1 y 100.000');
+    const channel: Channel = input.channel ?? 'physical';
+    if (input.costClp !== undefined && input.costClp !== null && (!Number.isInteger(input.costClp) || input.costClp < 0)) {
+      throw new PosError('INVALID_AMOUNT', 'El costo debe ser un entero de 0 o más');
+    }
+    if (input.priceNetClp !== undefined && input.priceNetClp !== null && (!Number.isInteger(input.priceNetClp) || input.priceNetClp < 0)) {
+      throw new PosError('INVALID_AMOUNT', 'El precio neto debe ser un entero de 0 o más');
+    }
+    const hasCost = input.costClp !== undefined && input.costClp !== null;
+    const hasPrice = input.priceNetClp !== undefined && input.priceNetClp !== null;
+
+    let product = this.product(barcode);
+    const created = !product;
+    if (!product) {
+      if (!input.name?.trim()) throw new PosError('INVALID_DATA', 'El producto no existe: indica su nombre para crearlo');
+      if (!hasPrice) throw new PosError('INVALID_DATA', 'El producto no existe: indica su precio de venta neto para crearlo');
+      const made = this.upsertProduct({
+        name: input.name, barcode, category: input.category, priceClp: addIva(input.priceNetClp!), costClp: input.costClp ?? 0,
+        published: input.published ?? true,
+      });
+      product = this.state.products.find((p) => p.id === made.id)!;
+    } else {
+      if (!product.active) throw new PosError('NOT_ALLOWED', `${product.name} está inactivo: actívalo antes de ingresar stock`);
+      if (hasCost) {
+        const before = Math.max(0, this.totalQty(product.id));
+        product.costClp = before > 0 ? Math.round((before * product.costClp + quantity * input.costClp!) / (before + quantity)) : input.costClp!;
+      }
+      if (hasPrice && addIva(input.priceNetClp!) !== product.priceClp) this.recordPriceChange(product, addIva(input.priceNetClp!), 'Ingreso de inventario');
+    }
+    const cell = this.cell(branchId, product.id, channel);
+    cell.qty += quantity;
+    this.state.movements.push({
+      id: this.id('mov'), branchId, productId: product.id, channel, delta: quantity, reason: 'initial', at: this.now().toISOString(),
+      unitCostClp: hasCost ? input.costClp! : product.costClp, unitPriceClp: product.priceClp,
+    });
+    return { product: clone(product), created, qty: cell.qty };
   }
 
   // ---------- persistencia ----------
