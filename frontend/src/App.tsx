@@ -151,15 +151,6 @@ export default function App() {
     return () => window.removeEventListener('hashchange', on);
   }, []);
 
-  if (!API_URL) {
-    return (
-      <div className="page">
-        <h1>Falta configurar el servidor</h1>
-        <p>Esta versión de la app no sabe a qué servidor conectarse. Compílala con la variable <code>VITE_API_URL</code>.</p>
-      </div>
-    );
-  }
-
   const logout = (msg?: string) => {
     clearSession();
     setSession(null);

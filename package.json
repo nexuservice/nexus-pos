@@ -3,8 +3,10 @@
   "private": true,
   "version": "0.2.0",
   "description": "Nexus: control de inventario, ventas y caja para negocios en Chile",
+  "engines": { "node": ">=22" },
   "workspaces": ["core", "backend", "frontend"],
   "scripts": {
+    "start": "npm run start -w backend",
     "dev:local": "node scripts/dev.mjs",
     "dev:api": "npm run dev -w backend",
     "dev:web": "npm run dev -w frontend",

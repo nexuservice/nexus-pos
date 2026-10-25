@@ -9,10 +9,11 @@ export class ApiError extends Error {
 }
 
 /**
- * Dirección del servidor. En producción se fija al compilar con VITE_API_URL;
- * en desarrollo (npm run dev:local) apunta al servidor local.
+ * Dirección del servidor. Vacía = la misma dirección desde la que se abrió la página (lo normal en producción,
+ * donde el servidor entrega también la app). En desarrollo apunta al servidor local; si el frontend se publica
+ * aparte, se fija al compilar con VITE_API_URL.
  */
-export const API_URL: string | null = (import.meta.env.VITE_API_URL as string | undefined) || (import.meta.env.DEV ? 'http://localhost:3001' : null);
+export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 const join = (base: string, p: string) => base.replace(/\/$/, '') + p;
 

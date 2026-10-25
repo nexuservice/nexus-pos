@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import {
@@ -18,6 +20,16 @@ export interface AppOptions {
   /** Orígenes permitidos (CORS). Sin lista, se aceptan todos (solo para desarrollo local). */
   allowedOrigins?: string[];
   limiter?: LoginLimiter;
+  /**
+   * Carpeta con la app web compilada (frontend/dist). Si existe, el mismo servidor la entrega:
+   * la página y la API quedan en una sola dirección, sin CORS ni segundo hosting.
+   */
+  staticDir?: string;
+  /**
+   * Cantidad de proxys de confianza delante del servidor (1 en Railway, Render, Fly…).
+   * Sin esto, todos los usuarios parecerían tener la IP del proxy y el límite de intentos de login se mezclaría.
+   */
+  trustProxy?: number;
 }
 
 type Json = Record<string, unknown>;
@@ -30,6 +42,7 @@ export function createApp(opts: AppOptions) {
 
   const app = express();
   app.disable('x-powered-by');
+  if (opts.trustProxy) app.set('trust proxy', opts.trustProxy);
   app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
   app.use(cors(opts.allowedOrigins?.length ? { origin: opts.allowedOrigins } : undefined));
   app.use(express.json({ limit: '1mb' }));
@@ -177,6 +190,19 @@ export function createApp(opts: AppOptions) {
       next(e);
     }
   });
+
+  // ---------- app web (si está compilada) ----------
+  // Una ruta /api que no existe responde JSON, nunca la página.
+  app.use('/api', (_req, res) => { res.status(404).json({ code: 'NOT_FOUND', message: 'Ruta no existe' }); });
+  const index = opts.staticDir ? path.join(opts.staticDir, 'index.html') : null;
+  if (opts.staticDir && index && fs.existsSync(index)) {
+    // Los archivos con nombre único (assets/…) se pueden guardar un año; la página principal siempre se revalida.
+    app.use(express.static(opts.staticDir, {
+      index: false,
+      setHeaders: (res, file) => { if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); },
+    }));
+    app.get('*', (_req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(index); });
+  }
 
   // ---------- errores ----------
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

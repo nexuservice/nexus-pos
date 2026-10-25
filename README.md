@@ -48,16 +48,37 @@ También hay un panel web para ti en **`http://localhost:5173/#superadmin`**: pi
 
 Los datos se guardan en `backend/data/` (no se sube a Git). Para usar otra carpeta: variable `NEXUS_DATA`.
 
+## Publicar en un servidor (Railway u otro)
+
+El mismo servidor entrega la API **y** la app web compilada: una sola dirección, un solo servicio, sin CORS. Funciona en cualquier proveedor con Node 22+ y un disco persistente.
+
+```bash
+npm ci --include=dev && npm run build   # compila la app web (frontend/dist)
+npm start                                # arranca el servidor, que entrega la API y la app web
+```
+
+**En Railway** (ya hay un `railway.json` con esos comandos y el chequeo de salud `/api/health`):
+1. Crear el proyecto desde el repositorio `nexus-pos` (rama `main` para producción o `dev` para pruebas).
+2. Agregar un **volumen** montado en `/data`.
+3. Variables: `NEXUS_DATA=/data`, `NEXUS_SECRET` (largo y aleatorio), `NEXUS_ADMIN_KEY` (larga). Railway define `PORT` y se detecta solo que hay un proxy delante.
+4. Con la dirección pública del servicio: crear el primer cliente en `https://<tu-dirección>/#superadmin`.
+
+Cada push a la rama conectada despliega solo. Un ambiente `staging` ligado a `dev` sirve para que el equipo pruebe sin tocar producción.
+
 ## Variables de entorno
 
 | Variable | Dónde | Para qué |
 |---|---|---|
-| `VITE_API_URL` | al compilar la app web | Dirección del servidor. En desarrollo apunta sola a `http://localhost:3001` |
-| `PORT` | servidor | Puerto (por defecto 3001) |
-| `NEXUS_DATA` | servidor | Carpeta de datos |
+| `PORT` | servidor | Puerto (por defecto 3001; el hosting lo define solo) |
+| `NEXUS_DATA` | servidor | Carpeta de datos. **En producción debe ser un disco persistente** |
 | `NEXUS_SECRET` | servidor | Secreto para firmar las sesiones (si falta, se genera un archivo) |
 | `NEXUS_ADMIN_KEY` | servidor | Clave de administrador (si falta, se genera un archivo) |
-| `ALLOWED_ORIGIN` | servidor | Orígenes permitidos (CORS), separados por coma. Vacío = todos (solo desarrollo) |
+| `NEXUS_STATIC` | servidor | Carpeta de la app web compilada (por defecto `frontend/dist`) |
+| `TRUST_PROXY` | servidor | Cantidad de proxys delante (se detecta solo en Railway). Necesario para que el límite de intentos de login use la IP real |
+| `ALLOWED_ORIGIN` | servidor | Orígenes permitidos (CORS), separados por coma. Solo hace falta si la app web se publica en otro sitio. Vacío = todos |
+| `VITE_API_URL` | al compilar la app web | Solo si la app web se publica aparte del servidor. Vacío = misma dirección. En desarrollo apunta sola a `http://localhost:3001` |
+
+> `netlify.toml` quedó de cuando la app web se publicaba sola. Con el servidor entregando todo ya no hace falta.
 
 ## Alcance y límites
 
