@@ -243,12 +243,14 @@ export class PosEngine {
       const cons = (this.state.consumptions ?? []).find((c) => c.id === m.refId);
       const buy = (this.state.purchases ?? []).find((x) => x.id === m.refId);
       const doc = buy ? `${PURCHASE_DOC_LABEL[buy.docType]} N° ${buy.docNumber}` : '';
+      // Nexus no emite boletas: la venta se nombra por su número de pedido.
+      const saleNum = sale?.number;
       switch (m.reason) {
         case 'purchase': return buy ? `Compra · ${doc} · ${buy.supplierName}` : 'Compra';
         case 'initial': return 'Ingreso de inventario';
-        case 'sale': return sale ? `Venta${sale.channel === 'online' ? ' online' : ''} #${sale.number}` : 'Venta';
-        case 'consumption': return cons ? `Consumo #${cons.number}${cons.note ? ` · ${cons.note}` : ''}` : 'Consumo';
-        case 'return': return sale ? `Anulación de venta #${sale.number}` : cons ? `Anulación de consumo #${cons.number}` : buy ? `Anulación de compra · ${doc}` : 'Devolución';
+        case 'sale': return sale ? `Venta N° ${saleNum}` : 'Venta';
+        case 'consumption': return cons ? `Consumo N° ${cons.number}${cons.note ? ` · ${cons.note}` : ''}` : 'Consumo';
+        case 'return': return sale ? `Anulación de venta N° ${saleNum}` : cons ? `Anulación de consumo N° ${cons.number}` : buy ? `Anulación de compra · ${doc}` : 'Devolución';
         case 'transfer': return m.delta < 0 ? `Traspaso a ${label[m.channel === 'physical' ? 'online' : 'physical']}` : `Traspaso desde ${label[m.channel === 'physical' ? 'online' : 'physical']}`;
         default: return 'Ajuste de inventario';
       }
@@ -260,45 +262,62 @@ export class PosEngine {
       ...(this.state.priceChanges ?? []).filter((c) => c.productId === p.id).map((c) => ({ at: c.at, price: c })),
     ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
-    let balance = currentQty - moves.reduce((n, m) => n + m.delta, 0);
+    // Inventario inicial: lo que había antes del primer movimiento, al costo de ese momento (en una compra, el costo previo a ella).
+    const startOfAll = currentQty - moves.reduce((n, m) => n + m.delta, 0);
+    const first = moves[0];
+    const startCost = first ? (first.reason === 'purchase' ? first.costBeforeClp ?? first.unitCostClp : first.unitCostClp) ?? p.costClp : p.costClp;
+    const startValue = startOfAll * startCost;
+    let balance = startOfAll;
+    let value = startValue;
     const all: StockCardRow[] = events.map((ev) => {
       if (ev.price) {
         const c = ev.price;
         const net = (g: number) => formatClp(splitIva(g).netClp);
         return {
-          id: c.id, at: c.at, channel: null, type: 'price', balance, entry: 0, exit: 0,
+          id: c.id, at: c.at, channel: null, type: 'price', balance, balanceValueClp: value, entry: 0, exit: 0,
           detail: `Cambio de precio · ${net(c.oldPriceClp)} → ${net(c.newPriceClp)} neto (${formatClp(c.oldPriceClp)} → ${formatClp(c.newPriceClp)} con IVA)${c.reason ? ` · ${c.reason}` : ''}`,
           unitCostClp: c.costClp, unitPriceNetClp: splitIva(c.newPriceClp).netClp, unitPriceClp: c.newPriceClp,
         };
       }
       const m = ev.move!;
-      balance += m.delta;
       // Los movimientos anteriores a esta función no traen precios anotados: se usan los vigentes.
-      const unitCostClp = m.unitCostClp ?? p.costClp;
+      const snapshotCost = m.unitCostClp ?? p.costClp;
       const unitPriceClp = m.unitPriceClp ?? p.priceClp;
       const unitPriceNetClp = splitIva(unitPriceClp).netClp;
       const qty = Math.abs(m.delta);
       const isPurchaseVoid = m.reason === 'return' && (this.state.purchases ?? []).some((x) => x.id === m.refId);
-      // Entradas al costo; salidas al precio de venta neto, salvo consumos y anulaciones de compra (al costo). Los traspasos no se valoran.
-      const valued = m.reason !== 'transfer';
+
+      // Valores: todo al costo. Las entradas, al costo de ese movimiento. Las salidas, al costo promedio del saldo en ese
+      // momento (valor ÷ unidades), salvo la anulación de una compra, que devuelve lo que costó. Así el saldo valorizado
+      // siempre es unidades × costo y queda en $0 exactamente cuando las unidades llegan a 0.
+      let entryValueClp: number | undefined;
+      let exitValueClp: number | undefined;
+      if (m.delta > 0) {
+        entryValueClp = qty * snapshotCost;
+      } else {
+        const unit = isPurchaseVoid || balance <= 0 ? snapshotCost : value / balance;
+        exitValueClp = balance - qty === 0 ? value : Math.round(qty * unit);
+      }
+      balance += m.delta;
+      value += (entryValueClp ?? 0) - (exitValueClp ?? 0);
+      const valueMoved = entryValueClp ?? exitValueClp ?? 0;
       return {
         id: m.id, at: m.at, channel: m.channel, type: m.reason, detail: detailOf(m), dateOnly: m.reason === 'purchase' || undefined,
         saleId: (m.reason === 'sale' || m.reason === 'return') && this.state.sales.some((s) => s.id === m.refId) ? m.refId : undefined,
-        entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance,
-        unitCostClp, unitPriceNetClp, unitPriceClp,
-        entryValueClp: valued && m.delta > 0 ? qty * unitCostClp : undefined,
-        exitValueClp: valued && m.delta < 0 ? qty * (m.reason === 'consumption' || isPurchaseVoid ? unitCostClp : unitPriceNetClp) : undefined,
+        entry: m.delta > 0 ? m.delta : 0, exit: m.delta < 0 ? -m.delta : 0, balance, balanceValueClp: value,
+        unitCostClp: qty > 0 ? Math.round(valueMoved / qty) : snapshotCost, unitPriceNetClp, unitPriceClp, entryValueClp, exitValueClp,
       };
     });
 
     const day = (iso: string) => santiagoDay(iso);
     const before = all.filter((r) => from && day(r.at) < from);
     const inRange = all.filter((r) => (!from || day(r.at) >= from) && (!to || day(r.at) <= to));
-    const startOfAll = currentQty - moves.reduce((n, m) => n + m.delta, 0);
     const openingQty = before.length ? before[before.length - 1]!.balance : startOfAll;
+    const openingValueClp = before.length ? before[before.length - 1]!.balanceValueClp : startValue;
     const closingQty = inRange.length ? inRange[inRange.length - 1]!.balance : openingQty;
+    const closingValueClp = inRange.length ? inRange[inRange.length - 1]!.balanceValueClp : openingValueClp;
     return clone({
-      product: p, channel, openingQty, closingQty,
+      product: p, channel, openingQty, closingQty, openingValueClp, openingUnitCostClp: startCost, closingValueClp,
       entries: inRange.reduce((n, r) => n + r.entry, 0), exits: inRange.reduce((n, r) => n + r.exit, 0),
       entryValueClp: inRange.reduce((n, r) => n + (r.entryValueClp ?? 0), 0), exitValueClp: inRange.reduce((n, r) => n + (r.exitValueClp ?? 0), 0),
       reservedQty: cells.reduce((n, c) => n + c.reserved, 0), currentQty, rows: [...inRange].reverse(),
@@ -810,6 +829,7 @@ export class PosEngine {
       const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, priceClp: newPrice ?? l.newProduct!.priceClp!, costClp: l.unitCostClp }).id;
       const product = this.state.products.find((p) => p.id === productId)!;
       if (l.productId && newPrice !== undefined) this.applyPrice(product, newPrice); // el precio sube con la inflación: el nuevo rige desde esta compra
+      const costBeforeClp = product.costClp;
       if (input.updateCost !== false) {
         const before = Math.max(0, this.totalQty(productId));
         product.costClp = before > 0 ? Math.round((before * product.costClp + l.quantity * l.unitCostClp) / (before + l.quantity)) : l.unitCostClp;
@@ -817,7 +837,7 @@ export class PosEngine {
       this.cell(input.branchId, productId, 'physical').qty += l.quantity;
       this.state.movements.push({
         id: this.id('mov'), branchId: input.branchId, productId, channel: 'physical', delta: l.quantity, reason: 'purchase', refId: id, at,
-        unitCostClp: l.unitCostClp, unitPriceClp: product.priceClp,
+        unitCostClp: l.unitCostClp, unitPriceClp: product.priceClp, costBeforeClp,
       });
       lines.push({
         productId, name: product.name, quantity: l.quantity, unitCostClp: l.unitCostClp, totalClp: l.quantity * l.unitCostClp,
@@ -892,7 +912,7 @@ export class PosEngine {
   // ---------- consumo propio ----------
   /**
    * Registra el contenido del carrito como consumo propio: descuenta el stock y lo valoriza al costo.
-   * No es una venta: no hay cobro, boleta ni folio, y no suma ingresos ni utilidad.
+   * No es una venta: no hay cobro ni comprobante, y no suma ingresos ni utilidad.
    */
   registerConsumption(cartId: string, note?: string | null): Consumption {
     const cart = this.openCart(cartId);

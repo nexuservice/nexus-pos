@@ -381,7 +381,7 @@ describe('compras a proveedores', () => {
     expect(card.openingQty).toBe(10);
     // la compra tiene fecha anterior a la venta, así que va antes aunque se registró después
     expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
-      [expect.stringMatching(/^Venta #1$/), 0, 3, 27],
+      ['Venta N° 1', 0, 3, 27],
       ['Compra · Factura N° 4521 · Distribuidora Sur', 20, 0, 30],
     ]);
     expect(card.rows[1]).toMatchObject({ at: '2026-10-10T15:00:00.000Z', dateOnly: true, type: 'purchase' });
@@ -507,23 +507,62 @@ describe('precios y valores en la tarjeta de existencia', () => {
     expect(buy({ lines: [{ newProduct: { name: 'Sin precio' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/precio de venta neto del producto nuevo/);
   });
 
-  it('con la inflación, cada movimiento guarda su costo y precio, y se valora: entradas al costo, salidas al precio neto', async () => {
+  it('con la inflación, cada movimiento guarda su precio, y entradas y salidas se valoran al costo', async () => {
     const e = mk();
     await sell(e, COLA, 2, 6000); // precio $1.990 (neto $1.672), costo $1.294
     e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000, priceNetClp: 1800 }] });
     await sell(e, COLA, 1, 3000); // ahora $2.142 (neto $1.800)
     const card = e.stockCard(B, COLA, 'physical');
     const pick = (r: (typeof card.rows)[number]) => [r.detail.split(' ')[0], r.unitCostClp, r.unitPriceNetClp, r.unitPriceClp, r.entryValueClp, r.exitValueClp];
+    // el precio de venta de cada momento queda anotado (inflación), pero los valores son siempre al costo:
+    // la 1.ª boleta saca 2 al costo de $1.294; la compra mete 20 a $1.000; la 2.ª saca 1 al promedio (10.352 + 20.000) ÷ 28 = $1.084
     expect(card.rows.map(pick)).toEqual([
-      ['Venta', 1084, 1800, 2142, undefined, 1800],
+      ['Venta', 1084, 1800, 2142, undefined, 1084],
       ['Compra', 1000, 1800, 2142, 20_000, undefined],
-      ['Venta', 1294, 1672, 1990, undefined, 3344],
+      ['Venta', 1294, 1672, 1990, undefined, 2588],
     ]);
-    expect(card).toMatchObject({ entryValueClp: 20_000, exitValueClp: 5144, entries: 20, exits: 3 });
+    expect(card).toMatchObject({ entryValueClp: 20_000, exitValueClp: 3672, entries: 20, exits: 3 });
     expect(e.stockCard(B, COLA, 'all', '2999-01-01')).toMatchObject({ entryValueClp: 0, exitValueClp: 0 });
   });
 
-  it('consumos y anulaciones de compra salen al costo; ajustes siguen la regla; los traspasos no se valoran', () => {
+  it('el saldo valorizado corre como el de unidades: inventario inicial al costo + entradas − salidas, todo al costo', async () => {
+    const e = mk();
+    await sell(e, COLA, 2, 6000); // 10 → 8 un.; salen 2 al costo de $1.294
+    e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000, priceNetClp: 1800 }] });
+    await sell(e, COLA, 1, 3000); // sale 1 al promedio: 30.352 ÷ 28 = $1.084
+    const card = e.stockCard(B, COLA, 'physical');
+    // inventario inicial: 10 un. al costo que había antes de la compra ($1.294), aunque la compra fuera a $1.000
+    expect(card).toMatchObject({ openingQty: 10, openingUnitCostClp: 1294, openingValueClp: 12_940, closingQty: 27 });
+    expect(card.rows.map((r) => [r.balance, r.balanceValueClp]).reverse()).toEqual([
+      [8, 12_940 - 2588], // 10.352
+      [28, 12_940 - 2588 + 20_000], // 30.352
+      [27, 12_940 - 2588 + 20_000 - 1084], // 29.268
+    ]);
+    expect(card.closingValueClp).toBe(29_268);
+    // con un período, el inicial valorizado arrastra lo anterior
+    const later = e.stockCard(B, COLA, 'physical', '2026-10-21');
+    expect(later).toMatchObject({ openingQty: 27, openingValueClp: 29_268, closingValueClp: 29_268, rows: [] });
+  });
+
+  it('cuando las unidades llegan a 0, el saldo valorizado también queda en 0 (y se puede volver a empezar)', async () => {
+    const e = mk();
+    e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1001, priceNetClp: 1800 }] }); // costo con decimales al promediar
+    await sell(e, COLA, 12, 40_000);
+    const k = e.createCart(B, 'physical'); e.cartAdd(k.id, COLA, 10); e.registerConsumption(k.id);
+    e.adjustStock(B, COLA, 'physical', -8); // 10 + 20 − 12 − 10 − 8 = 0
+    let card = e.stockCard(B, COLA, 'physical');
+    const last = card.rows[0]!; // la fila más nueva
+    expect(last).toMatchObject({ balance: 0, balanceValueClp: 0 });
+    expect(card).toMatchObject({ closingQty: 0, closingValueClp: 0, currentQty: 0 });
+    // lo que salió suma exactamente lo que entró (inicial + compra): no queda ni sobra ningún peso
+    expect(card.entryValueClp + card.openingValueClp).toBe(card.exitValueClp);
+    // y al volver a comprar, el saldo parte de cero con el costo nuevo
+    e.registerPurchase({ ...base, docNumber: '2', lines: [{ productId: COLA, quantity: 5, unitCostClp: 1100 }] });
+    card = e.stockCard(B, COLA, 'physical');
+    expect(card.rows[0]).toMatchObject({ balance: 5, balanceValueClp: 5500 });
+  });
+
+  it('consumos, ajustes y traspasos salen al costo promedio; la anulación de una compra devuelve lo que costó', () => {
     const e = mk();
     const k = e.createCart(B, 'physical'); e.cartAdd(k.id, COLA, 2);
     e.registerConsumption(k.id);
@@ -537,8 +576,8 @@ describe('precios y valores en la tarjeta de existencia', () => {
     expect(rows.map(v)).toEqual([
       ['consumption', undefined, 2 * 1294], // al costo
       ['adjustment', 3 * 1294, undefined], // entrada al costo
-      ['adjustment', undefined, 1672], // salida al precio neto de venta
-      ['transfer', undefined, undefined], // sin valor
+      ['adjustment', undefined, 1294], // salida al costo promedio, no al precio de venta
+      ['transfer', undefined, 1294], // en la vista de un canal también se valora, para que el saldo cuadre
       ['purchase', 5000, undefined],
       ['return', undefined, 5000], // la anulación de la compra sale al costo de esa compra
     ]);
@@ -578,14 +617,14 @@ describe('corrección del precio de venta', () => {
 
     const card = e.stockCard(B, COLA, 'physical');
     expect(card.rows.map((r) => [r.type, r.entry, r.exit, r.balance, r.unitPriceClp, r.exitValueClp])).toEqual([
-      ['sale', 0, 1, 7, 1190, 1000],
+      ['sale', 0, 1, 7, 1190, 1294],
       ['price', 0, 0, 8, 1190, undefined],
-      ['sale', 0, 2, 8, 1990, 3344], // la venta anterior se sigue valorando al precio de entonces
+      ['sale', 0, 2, 8, 1990, 2588], // la venta anterior conserva su precio ($1.990); los valores son al costo
     ]);
     expect(card.rows[1]).toMatchObject({
       channel: null, detail: 'Cambio de precio · $1.672 → $1.000 neto ($1.990 → $1.190 con IVA) · error al digitar', unitPriceNetClp: 1000,
     });
-    expect(card).toMatchObject({ entries: 0, exits: 3, exitValueClp: 4344, closingQty: 7 });
+    expect(card).toMatchObject({ entries: 0, exits: 3, exitValueClp: 3882, closingQty: 7 });
     expect(e.stockCard(B, COLA, 'all').rows.map((r) => r.type)).toEqual(['sale', 'price', 'sale']);
   });
 
@@ -651,11 +690,11 @@ describe('tarjeta de existencia', () => {
     expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
       ['Traspaso a Online', 0, 1, 9],
       ['Ajuste de inventario', 5, 0, 10],
-      ['Consumo #1 · degustación', 0, 2, 5],
-      [`Venta #${e.getSale(sale.saleId!).number}`, 0, 3, 7],
+      ['Consumo N° 1 · degustación', 0, 2, 5],
+      [`Venta N° ${e.getSale(sale.saleId!).number}`, 0, 3, 7],
     ]);
     expect(card).toMatchObject({ closingQty: 9, currentQty: 9, entries: 5, exits: 6 });
-    // solo las ventas apuntan a su boleta; consumo, ajuste y traspaso no
+    // solo las ventas apuntan a su comprobante; consumo, ajuste y traspaso no
     expect(card.rows.map((r) => r.saleId)).toEqual([undefined, undefined, undefined, sale.saleId]);
     expect(e.available(B, COLA, 'physical')).toBe(card.closingQty);
     expect(cons.id).toBeTruthy();
@@ -679,8 +718,8 @@ describe('tarjeta de existencia', () => {
     const num = e.getSale(p.saleId!).number;
     e.voidSale(p.saleId!);
     const card = e.stockCard(B, AGUA, 'physical');
-    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de venta #${num}`, 40], [`Venta #${num}`, 38]]);
-    expect(card.rows.map((r) => r.saleId)).toEqual([p.saleId, p.saleId]); // la anulación también abre la boleta
+    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de venta N° ${num}`, 40], [`Venta N° ${num}`, 38]]);
+    expect(card.rows.map((r) => r.saleId)).toEqual([p.saleId, p.saleId]); // la anulación también abre el comprobante
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
     expect(e.stockCard(B, AGUA, 'physical', hoy, hoy).rows).toHaveLength(2);
     const futuro = e.stockCard(B, AGUA, 'physical', '2999-01-01');

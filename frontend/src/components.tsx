@@ -6,7 +6,7 @@ import type { PosApi } from './api/types';
 import { businessHeaderHtml, esc, estadoCuentaHtml, fmtDateTime, printHtml } from './format';
 import { msg } from './hooks';
 
-export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; xwide?: boolean }) {
+export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; xwide?: boolean; className?: string; header?: ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && props.onClose();
     window.addEventListener('keydown', onKey);
@@ -14,8 +14,8 @@ export function Modal(props: { title?: string; onClose: () => void; children: Re
   }, [props]);
   return (
     <div className="modal-back" role="dialog" aria-modal="true" aria-label={props.title} onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
-      <div className={'modal' + (props.xwide ? ' xwide' : props.wide ? ' wide' : '')}>
-        {props.title && <h3 className="modal-title">{props.title}</h3>}
+      <div className={'modal' + (props.xwide ? ' xwide' : props.wide ? ' wide' : '') + (props.className ? ` ${props.className}` : '')}>
+        {props.header ?? (props.title && <h3 className="modal-title">{props.title}</h3>)}
         {props.children}
       </div>
     </div>

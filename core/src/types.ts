@@ -257,7 +257,7 @@ export interface PurchaseInput {
 
 /**
  * Consumo propio: salida de inventario que no es una venta. Se valoriza al costo, así que no genera
- * ingreso ni ganancia, y no emite boleta ni usa folio.
+ * ingreso ni ganancia, y no genera comprobante.
  */
 export interface Consumption {
   id: string;
@@ -288,6 +288,8 @@ export interface StockMovement {
   /** Costo neto unitario y precio de venta unitario (con IVA) vigentes en ese movimiento: con la inflación van cambiando. */
   unitCostClp?: number;
   unitPriceClp?: number;
+  /** Solo en compras: el costo del producto justo antes de esa compra (sirve para valorar el inventario inicial). */
+  costBeforeClp?: number;
   at: string;
 }
 
@@ -303,20 +305,22 @@ export interface StockCardRow {
   detail: string;
   /** Las compras se fechan con el día del documento, así que solo cuenta la fecha, no la hora. */
   dateOnly?: boolean;
-  /** Venta de origen (o la venta anulada), para abrir su boleta desde la tarjeta. */
+  /** Venta de origen (o la venta anulada), para abrir su comprobante desde la tarjeta. */
   saleId?: string;
   entry: number;
   exit: number;
   /** Existencia después de este movimiento. */
   balance: number;
-  /** Costo neto unitario y precio de venta unitario (neto y con IVA) vigentes en ese movimiento. */
+  /** Costo unitario con que se valoró este movimiento, y el precio de venta unitario (neto y con IVA) vigente entonces. */
   unitCostClp: number;
   unitPriceNetClp: number;
   unitPriceClp: number;
-  /** Cantidad × costo. Vacío en traspasos entre canales, que no se valoran. */
+  /** Cantidad × costo de esa entrada. */
   entryValueClp?: number;
-  /** Cantidad × precio de venta neto (consumos y anulaciones de compra, al costo). */
+  /** Cantidad × costo promedio del saldo en ese momento (la anulación de una compra, a lo que costó). Siempre al costo, nunca al precio de venta. */
   exitValueClp?: number;
+  /** Saldo valorizado después de este movimiento: inventario inicial + valor de entradas − valor de salidas. */
+  balanceValueClp: number;
 }
 
 /** Tarjeta de existencia (kardex) de un producto. Las filas van de la más nueva a la más antigua. */
@@ -325,9 +329,13 @@ export interface StockCard {
   channel: Channel | 'all';
   openingQty: number;
   closingQty: number;
+  /** Inventario inicial valorizado al costo, y costo unitario con que se valoró (sin filtro de fecha). */
+  openingValueClp: number;
+  openingUnitCostClp: number;
+  closingValueClp: number;
   entries: number;
   exits: number;
-  /** Valor de las entradas del período (al costo) y de las salidas (al precio de venta neto; consumos al costo). */
+  /** Valor de las entradas y de las salidas del período, ambos al costo. */
   entryValueClp: number;
   exitValueClp: number;
   /** Cantidad reservada en carritos y pedidos abiertos (dentro de la existencia actual). */
