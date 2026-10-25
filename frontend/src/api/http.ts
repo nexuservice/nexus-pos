@@ -56,14 +56,36 @@ export function createHttpApi(base: string, getToken: () => string, onUnauthoriz
     rpc: call,
     pay: (cartId, method, opts = {}) => post(`/api/carts/${cartId}/pay`, { method, ...opts }),
     watchPayment(paymentId, onEvent) {
-      const es = new EventSource(join(base, `/api/payments/${paymentId}/events?token=${encodeURIComponent(getToken())}`));
-      es.onmessage = (m) => {
-        const e = JSON.parse(m.data) as PaymentEvent;
+      // Canal principal: eventos en vivo (SSE). Respaldo: consultar el estado del pago cada 1,5 s, por si algún
+      // proxy, túnel o red móvil bloquea o corta SSE; así el cobro nunca queda "cobrando" para siempre.
+      let finished = false;
+      const terminal = (t: PaymentEvent['type']) => t === 'approved' || t === 'rejected' || t === 'cancelled';
+      const finish = () => { finished = true; es.close(); clearInterval(poll); clearTimeout(start); };
+      const deliver = (e: PaymentEvent) => {
+        if (finished) return;
+        if (terminal(e.type)) finish();
         onEvent(e);
-        if (e.type === 'approved' || e.type === 'rejected' || e.type === 'cancelled') es.close();
       };
+
+      const es = new EventSource(join(base, `/api/payments/${paymentId}/events?token=${encodeURIComponent(getToken())}`));
+      es.onmessage = (m) => deliver(JSON.parse(m.data) as PaymentEvent);
       es.onerror = () => es.close();
-      return () => es.close();
+
+      let poll: ReturnType<typeof setInterval>;
+      const start = setTimeout(() => {
+        poll = setInterval(async () => {
+          try {
+            const p = await call.getPayment(paymentId);
+            if (p.status === 'approved') deliver({ paymentId, type: 'approved', saleId: p.saleId, at: new Date().toISOString() });
+            else if (p.status === 'rejected') deliver({ paymentId, type: 'rejected', message: p.message, at: new Date().toISOString() });
+            else if (p.status === 'cancelled') deliver({ paymentId, type: 'cancelled', message: p.message, at: new Date().toISOString() });
+          } catch {
+            /* sin red por un momento: se reintenta en el siguiente ciclo */
+          }
+        }, 1500);
+      }, 2500);
+
+      return finish;
     },
     backup: async () => JSON.stringify(await call.snapshot(), null, 2),
   };

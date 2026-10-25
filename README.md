@@ -65,6 +65,30 @@ npm start                                # arranca el servidor, que entrega la A
 
 Cada push a la rama conectada despliega solo. Un ambiente `staging` ligado a `dev` sirve para que el equipo pruebe sin tocar producción.
 
+## Publicar con Docker (Fly.io, Render, Railway o un servidor propio)
+
+El `Dockerfile` compila la app web y arranca el servidor en una sola imagen (puerto 8080, datos en `/data`). **Sin un disco persistente montado en `/data`, los datos se pierden al reiniciar.** No lo pude construir con Docker en el equipo de desarrollo; sí se comprobaron los mismos pasos (`npm ci`, `npm run build`, `npm prune --omit=dev`, `npm start`) en una copia limpia.
+
+**Fly.io** (`fly.toml` incluido; en la documentación de Fly una máquina de 512 MB con un volumen de 1 GB cuesta unos US$4 al mes y no hay plan gratis, hay que registrar una tarjeta):
+```bash
+fly launch --no-deploy --copy-config      # elige un nombre único para la app
+fly volumes create nexus_data --size 1    # el disco de los datos (en la misma región)
+fly secrets set NEXUS_SECRET=<largo-y-aleatorio> NEXUS_ADMIN_KEY=<largo>
+fly deploy
+fly scale count 1                          # una sola máquina: el estado de cada negocio vive en memoria y en el volumen
+```
+Cuidados: un volumen vive en **un solo disco**; las copias diarias de Fly (5 días por defecto) no reemplazan un respaldo propio. Cada despliegue deja la app caída unos segundos.
+
+## Mostrarlo a alguien sin publicarlo (túnel temporal)
+
+Con la app compilada, un túnel puede darle a otra persona una dirección que apunta a tu PC **mientras esté encendida**:
+
+```bash
+npm run build && npm start               # el servidor entrega la app y la API en http://localhost:3001
+cloudflared tunnel --url http://localhost:3001   # imprime una dirección https://….trycloudflare.com
+```
+La dirección cambia cada vez y no tiene garantía de disponibilidad. Los túneles rápidos de Cloudflare no soportan SSE; Nexus lo cubre consultando el estado del cobro cada 1,5 s si el canal de eventos falla. Comparte la dirección solo con quien deba verla y usa clientes de prueba.
+
 ## Variables de entorno
 
 | Variable | Dónde | Para qué |
