@@ -7,6 +7,7 @@ import {
   type PayMethod, type Provider, type TerminalGateway,
 } from '@nexus/core';
 import { LoginLimiter, safeEqual, signToken, verifyToken } from './auth';
+import { isBackupId, type BackupService } from './backup';
 import { TenantError, type TenantManager } from './tenants';
 
 export interface AppOptions {
@@ -30,6 +31,8 @@ export interface AppOptions {
    * Sin esto, todos los usuarios parecerían tener la IP del proxy y el límite de intentos de login se mezclaría.
    */
   trustProxy?: number;
+  /** Servicio de respaldos: habilita los endpoints /api/admin/backups y la restauración. */
+  backups?: BackupService;
 }
 
 type Json = Record<string, unknown>;
@@ -190,6 +193,58 @@ export function createApp(opts: AppOptions) {
       next(e);
     }
   });
+
+  // ---------- respaldos (solo tú) ----------
+  const backups = opts.backups;
+  if (backups) {
+    app.get('/api/admin/backups', requireAdmin, (_req, res) => { res.json(backups.list()); });
+
+    app.post('/api/admin/backups', requireAdmin, (_req, res, next) => {
+      try {
+        res.status(201).json(backups.create(manager.exportAll(), { force: true, reason: 'manual' }));
+        backups.prune();
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    /** Descarga un respaldo completo (o, con ?rut=, solo el negocio de ese cliente: sin claves ni datos de otros). */
+    app.get('/api/admin/backups/:id', requireAdmin, (req, res) => {
+      const id = String(req.params.id);
+      if (!isBackupId(id)) return res.status(400).json({ code: 'INVALID_DATA', message: 'Identificador inválido' });
+      let data;
+      try { data = backups.load(id); } catch { return res.status(404).json({ code: 'NOT_FOUND', message: 'El respaldo no existe' }); }
+      const rut = typeof req.query.rut === 'string' ? req.query.rut : '';
+      if (rut) {
+        const t = isValidRut(rut) ? data.index.find((x) => x.rut === normalizeRut(rut)) : undefined;
+        if (!t || !data.states[t.id]) return res.status(404).json({ code: 'NOT_FOUND', message: 'Ese cliente no está en el respaldo' });
+        res.setHeader('Content-Disposition', `attachment; filename="nexus-${t.rut}-${id}.json"`);
+        return res.json({ business: { rut: t.rut, name: t.name }, backupId: id, state: data.states[t.id] });
+      }
+      res.setHeader('Content-Disposition', `attachment; filename="nexus-respaldo-${id}.json"`);
+      res.json(data);
+    });
+
+    /** Restaura los datos de un cliente desde un respaldo. Antes hace una copia de seguridad de lo actual. */
+    app.post('/api/admin/tenants/:rut/restore', requireAdmin, (req, res, next) => {
+      try {
+        const rut = String(req.params.rut);
+        const backupId = String((req.body ?? {}).backupId ?? '');
+        if (!isBackupId(backupId)) return res.status(400).json({ code: 'INVALID_DATA', message: 'Elige un respaldo' });
+        const tenant = isValidRut(rut) ? manager.list().find((t) => t.rut === normalizeRut(rut)) : undefined;
+        if (!tenant) return res.status(404).json({ code: 'NOT_FOUND', message: 'No existe un cliente con ese RUT' });
+        let data;
+        try { data = backups.load(backupId); } catch { return res.status(404).json({ code: 'NOT_FOUND', message: 'El respaldo no existe' }); }
+        const state = data.states[tenant.id];
+        if (!state) return res.status(404).json({ code: 'NOT_FOUND', message: 'Ese cliente no tenía datos en ese respaldo' });
+        const safety = backups.create(manager.exportAll(), { force: true, reason: `antes de restaurar a ${tenant.rut}` });
+        manager.restoreState(tenant.id, state);
+        res.json({ restored: tenant.rut, from: backupId, safetyBackup: safety?.id ?? null });
+      } catch (e) {
+        next(e);
+      }
+    });
+  }
 
   // ---------- app web (si está compilada) ----------
   // Una ruta /api que no existe responde JSON, nunca la página.

@@ -91,6 +91,14 @@ export function createHttpApi(base: string, getToken: () => string, onUnauthoriz
   };
 }
 
+export interface BackupInfo {
+  id: string;
+  createdAt: string;
+  tenants: number;
+  bytes: number;
+  reason: string;
+}
+
 export interface TenantInfo {
   id: string;
   rut: string;
@@ -107,5 +115,16 @@ export function createAdminClient(base: string, adminKey: string) {
     create: (rut: string, name: string, password: string) => request<TenantInfo>(base, 'POST', '/api/admin/tenants', { rut, name, password }, h),
     setActive: (rut: string, active: boolean) => request<TenantInfo>(base, 'PATCH', `/api/admin/tenants/${encodeURIComponent(rut)}`, { active }, h),
     setPassword: (rut: string, password: string) => request<TenantInfo>(base, 'PATCH', `/api/admin/tenants/${encodeURIComponent(rut)}`, { password }, h),
+    backups: () => request<BackupInfo[]>(base, 'GET', '/api/admin/backups', undefined, h),
+    createBackup: () => request<BackupInfo>(base, 'POST', '/api/admin/backups', {}, h),
+    /** Texto JSON del respaldo completo, o solo el del cliente con ese RUT. */
+    downloadBackup: async (id: string, rut?: string): Promise<string> => {
+      let res: Response;
+      try { res = await fetch(join(base, `/api/admin/backups/${id}${rut ? `?rut=${encodeURIComponent(rut)}` : ''}`), { headers: h }); } catch { throw new ApiError('NETWORK', 'No se pudo conectar con el servidor.'); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new ApiError(d.code ?? 'HTTP', d.message ?? `Error ${res.status}`, res.status); }
+      return res.text();
+    },
+    restore: (rut: string, backupId: string) =>
+      request<{ restored: string; from: string; safetyBackup: string | null }>(base, 'POST', `/api/admin/tenants/${encodeURIComponent(rut)}/restore`, { backupId }, h),
   };
 }

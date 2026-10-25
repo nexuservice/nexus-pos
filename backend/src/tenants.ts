@@ -15,6 +15,12 @@ export interface TenantRecord {
 }
 export type PublicTenant = Omit<TenantRecord, 'passwordHash'>;
 
+/** Todo lo que hay que guardar para poder reconstruir el sistema: la lista de clientes y el estado de cada negocio. */
+export interface ExportData {
+  index: TenantRecord[];
+  states: Record<string, EngineState>;
+}
+
 export class TenantError extends Error {
   constructor(public readonly code: 'INVALID_DATA' | 'INVALID_RUT' | 'DUPLICATE' | 'NOT_FOUND', message: string) {
     super(message);
@@ -170,5 +176,25 @@ export class TenantManager {
   save(id: string): void {
     const e = this.engines.get(id);
     if (e) this.storage.saveState(id, e.snapshot());
+  }
+
+  /** Foto de todos los negocios, con lo que hay en memoria (lo más reciente) o, si no está cargado, lo guardado. */
+  exportAll(): ExportData {
+    this.sync();
+    const states: Record<string, EngineState> = {};
+    for (const r of this.records) {
+      states[r.id] = this.engines.get(r.id)?.snapshot() ?? this.storage.loadState(r.id) ?? emptyState({ name: r.name, rut: r.rut });
+    }
+    return { index: structuredClone(this.records), states };
+  }
+
+  /** Reemplaza los datos de un negocio por los de un respaldo. No toca su RUT ni su clave. */
+  restoreState(id: string, state: EngineState): void {
+    if (!this.get(id)) throw new TenantError('NOT_FOUND', 'Cliente no existe');
+    const ok = state && typeof state === 'object' && ['products', 'sales', 'shifts', 'cashiers', 'clients', 'movements'].every((k) => Array.isArray((state as unknown as Record<string, unknown>)[k]))
+      && typeof state.stock === 'object' && typeof state.saleSeq === 'number';
+    if (!ok) throw new TenantError('INVALID_DATA', 'El respaldo no tiene el formato esperado');
+    this.engines.delete(id); // el próximo uso carga el estado restaurado
+    this.storage.saveState(id, state);
   }
 }

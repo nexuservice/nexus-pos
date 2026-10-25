@@ -48,6 +48,22 @@ También hay un panel web para ti en **`http://localhost:5173/#superadmin`**: pi
 
 Los datos se guardan en `backend/data/` (no se sube a Git). Para usar otra carpeta: variable `NEXUS_DATA`.
 
+## Respaldos
+
+El servidor respalda **solo**, sin que hagas nada:
+- Cada **6 horas** (y al arrancar, si la última copia es vieja) guarda la lista de clientes y el estado de cada negocio en `backend/data/backups/`.
+- **No duplica:** si nada cambió desde la última copia, no crea otra.
+- **Retención:** todas las copias de las últimas 48 horas, luego una por día durante 30 días; lo más viejo se borra.
+- Cada copia se escribe completa o no se escribe (no quedan copias a medias).
+
+Desde `http://localhost:5173/#superadmin` (clave de administrador):
+- **Respaldar ahora**, ver la lista y **Descargar todo** (o solo el de un cliente, sin claves ni datos de otros).
+- **Restaurar…** a un cliente desde cualquier copia: reemplaza los datos de ese cliente (no sus claves ni a los demás) y **antes guarda una copia de lo que tenía**, para poder deshacerlo.
+
+Por terminal: `npm run cliente -- respaldar` y `npm run cliente -- respaldos`.
+
+> **Una copia en el mismo disco no protege si el disco se pierde** (falla, robo, borrado). Descarga una copia de vez en cuando y guárdala en otro lugar (tu PC, un pendrive, la nube). En Railway/Fly, además del volumen de datos conviene usar `BACKUP_DIR` en otro volumen.
+
 ## Publicar en un servidor (Railway u otro)
 
 El mismo servidor entrega la API **y** la app web compilada: una sola dirección, un solo servicio, sin CORS. Funciona en cualquier proveedor con Node 22+ y un disco persistente.
@@ -97,6 +113,9 @@ La dirección cambia cada vez y no tiene garantía de disponibilidad. Los túnel
 | `NEXUS_DATA` | servidor | Carpeta de datos. **En producción debe ser un disco persistente** |
 | `NEXUS_SECRET` | servidor | Secreto para firmar las sesiones (si falta, se genera un archivo) |
 | `NEXUS_ADMIN_KEY` | servidor | Clave de administrador (si falta, se genera un archivo) |
+| `BACKUP_DIR` | servidor | Carpeta de respaldos (por defecto `<datos>/backups`) |
+| `BACKUP_INTERVAL_HOURS` | servidor | Cada cuántas horas respalda (por defecto 6; `0` lo desactiva) |
+| `BACKUP_KEEP_DAYS` | servidor | Días de historia (por defecto 30) |
 | `NEXUS_STATIC` | servidor | Carpeta de la app web compilada (por defecto `frontend/dist`) |
 | `TRUST_PROXY` | servidor | Cantidad de proxys delante (se detecta solo en Railway). Necesario para que el límite de intentos de login use la IP real |
 | `ALLOWED_ORIGIN` | servidor | Orígenes permitidos (CORS), separados por coma. Solo hace falta si la app web se publica en otro sitio. Vacío = todos |

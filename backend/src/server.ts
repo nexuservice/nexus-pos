@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SimulatedGateway } from '@nexus/core';
 import { createApp } from './app';
+import { BackupService, startBackupScheduler } from './backup';
 import { DATA_DIR, loadSecret } from './config';
 import { FileTenantStorage, TenantManager } from './tenants';
 
@@ -16,14 +17,21 @@ const serveWeb = fs.existsSync(path.join(staticDir, 'index.html'));
 // Detrás de Railway, Render, Fly… hay un proxy: sin esto todos los usuarios compartirían IP.
 const behindProxy = process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) : process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME ? 1 : 0;
 
+// Respaldos: por defecto una carpeta junto a los datos, cada 6 horas, 30 días de historia.
+const backupDir = process.env.BACKUP_DIR ?? path.join(DATA_DIR, 'backups');
+const backupEveryHours = Number(process.env.BACKUP_INTERVAL_HOURS ?? 6);
+const backups = new BackupService(backupDir, undefined, Number(process.env.BACKUP_KEEP_DAYS ?? 30));
+
+const manager = new TenantManager(new FileTenantStorage(DATA_DIR));
 const app = createApp({
-  manager: new TenantManager(new FileTenantStorage(DATA_DIR)),
+  manager,
   secret: secret.value,
   adminKey: admin.value,
   gateway: new SimulatedGateway({ delayMs: Number(process.env.TERMINAL_DELAY_MS ?? 1500) }),
   allowedOrigins: process.env.ALLOWED_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean),
   staticDir: serveWeb ? staticDir : undefined,
   trustProxy: behindProxy,
+  backups,
 });
 
 app.listen(PORT, () => {
@@ -31,4 +39,7 @@ app.listen(PORT, () => {
   console.log(serveWeb ? `Entrega también la app web desde ${staticDir}` : 'Solo API (la app web se sirve aparte, por ejemplo con npm run dev:local)');
   if (admin.created) console.log(`\nClave de administrador generada (guárdala): ${admin.value}\nTambién está en ${path.join(DATA_DIR, 'admin.key')}\n`);
   else console.log('Clave de administrador: la de la variable NEXUS_ADMIN_KEY o el archivo admin.key');
+  if (backupEveryHours > 0) console.log(`Respaldos cada ${backupEveryHours} h en ${backupDir} (se conservan ${process.env.BACKUP_KEEP_DAYS ?? 30} días)`);
 });
+
+startBackupScheduler(manager, backups, backupEveryHours * 3600_000);
