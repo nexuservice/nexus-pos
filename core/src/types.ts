@@ -128,6 +128,8 @@ export interface Cart {
   totalClp: number;
   promotion?: AppliedPromo;
   status: 'open' | 'paying' | 'closed' | 'held';
+  /** Pedido de la tienda web que se cobra al retirar: lo cobra el cajero en caja (con jornada y cualquier medio), no el cliente online. */
+  pickup?: boolean;
 }
 
 export type PaymentStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';

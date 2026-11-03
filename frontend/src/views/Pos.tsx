@@ -18,7 +18,7 @@ function Clock() {
   return <span className="clock">{fmtTime(now)}</span>;
 }
 
-export function PosView({ api, branchId, go }: { api: PosApi; branchId: string | null; go: (tab: string) => void }) {
+export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; branchId: string | null; go: (tab: string) => void; refreshKey?: number }) {
   const { prefs } = useSettings();
   const c = useCart(api, branchId, 'physical');
   const pay = usePayment(api);
@@ -39,7 +39,7 @@ export function PosView({ api, branchId, go }: { api: PosApi; branchId: string |
     await shift.refresh();
   }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { refreshMeta().catch(() => undefined); }, [refreshMeta]);
+  useEffect(() => { refreshMeta().catch(() => undefined); }, [refreshMeta, refreshKey]);
   useEffect(() => { api.rpc.branches().then((b) => setBranchName(b[0]?.name ?? '')); }, [api]);
   useEffect(() => { if (prefs.showBarcode) barcodeRef.current?.focus(); }, [prefs.showBarcode, shift.info]);
 

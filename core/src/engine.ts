@@ -25,7 +25,22 @@ export interface EngineOptions {
   terminal?: string;
 }
 
-type Listener = (e: PaymentEvent) => void;
+/** Un pedido web sin pagar libera su stock a las 24 horas; hay tope de pedidos pendientes y de tamaño para frenar abusos. */
+export const WEB_ORDER_TTL_HOURS = 24;
+const WEB_ORDER_MAX_PENDING = 100;
+const WEB_ORDER_MAX_LINES = 30;
+const WEB_ORDER_MAX_QTY = 50;
+
+export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number }
+export interface WebOrderInput {
+  items: { productId: string; quantity: number }[];
+  customerName: string;
+  phone: string;
+  email?: string;
+  note?: string;
+}
+
+type Listener =(e: PaymentEvent) => void;
 const clone = <T>(v: T): T => structuredClone(v);
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -665,7 +680,7 @@ export class PosEngine {
     if (!PAY_METHODS.includes(method)) throw new PosError('METHOD_NOT_ALLOWED', 'Medio de pago no válido');
     const cart = this.openCart(cartId);
     if (cart.lines.length === 0) throw new PosError('EMPTY_CART', 'El carrito está vacío');
-    if (cart.channel === 'online') {
+    if (cart.channel === 'online' && !cart.pickup) {
       if (!cart.customer.name || !cart.customer.email) throw new PosError('CUSTOMER_REQUIRED', 'Faltan nombre y correo del cliente');
       if (!isTerminalMethod(method)) throw new PosError('METHOD_NOT_ALLOWED', 'La tienda online solo acepta tarjeta');
     } else if (!this.openShiftRef()) {
@@ -1106,6 +1121,63 @@ export class PosEngine {
       cart.status = 'closed';
     }
     t.status = 'done';
+  }
+
+  // ---------- tienda web pública ----------
+  /** Catálogo para el público: solo lo publicado y activo, sin costos ni códigos internos. Stock del canal online. */
+  publicCatalog(): PublicProduct[] {
+    const branchId = this.state.branches[0]?.id;
+    if (!branchId) return [];
+    return this.state.products
+      .filter((p) => p.active && p.published)
+      .map((p) => ({ id: p.id, name: p.name, category: p.category, priceClp: p.priceClp, available: Math.max(0, this.available(branchId, p.id, 'online')) }));
+  }
+
+  /** Cancela los pedidos web sin pagar con más de `maxAgeHours` horas, para devolver el stock que reservaron. Devuelve cuántos. */
+  expireWebOrders(maxAgeHours = WEB_ORDER_TTL_HOURS): number {
+    const limit = this.now().getTime() - maxAgeHours * 3_600_000;
+    const old = this.state.tickets.filter((t) => t.status === 'open' && !t.paid && t.channel === 'web' && Date.parse(t.createdAt) < limit);
+    for (const t of old) this.cancelTicket(t.id);
+    return old.length;
+  }
+
+  /**
+   * Pedido de un cliente anónimo de la tienda web: reserva el stock online y deja un pedido abierto (sin pagar, se cobra al retirar).
+   * Es todo o nada: si un producto no alcanza, no queda nada reservado.
+   */
+  placeWebOrder(input: WebOrderInput): Ticket {
+    const name = input.customerName?.trim() ?? '';
+    const phone = input.phone?.trim() ?? '';
+    const email = input.email?.trim() ?? '';
+    if (!name || name.length > 80) throw new PosError('CUSTOMER_REQUIRED', 'Indica tu nombre');
+    if (phone.replace(/\D/g, '').length < 8 || phone.length > 20) throw new PosError('INVALID_DATA', 'Indica un teléfono de contacto válido');
+    if (email && (email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new PosError('INVALID_DATA', 'El correo no es válido');
+    const note = input.note?.trim() ?? '';
+    if (note.length > 300) throw new PosError('INVALID_DATA', 'La nota es demasiado larga');
+    const items = Array.isArray(input.items) ? input.items : [];
+    if (items.length === 0) throw new PosError('EMPTY_CART', 'El pedido está vacío');
+    if (items.length > WEB_ORDER_MAX_LINES) throw new PosError('INVALID_DATA', 'El pedido tiene demasiados productos distintos');
+    const branchId = this.state.branches[0]?.id;
+    if (!branchId) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    this.expireWebOrders();
+    const pending = this.state.tickets.filter((t) => t.status === 'open' && !t.paid && t.channel === 'web').length;
+    if (pending >= WEB_ORDER_MAX_PENDING) throw new PosError('NOT_ALLOWED', 'La tienda no puede recibir más pedidos por ahora');
+
+    const cart = this.createCart(branchId, 'online', { name, phone, email: email || undefined });
+    this.cartOf(cart.id).pickup = true;
+    try {
+      for (const it of items) {
+        if (typeof it?.productId !== 'string' || !Number.isInteger(it.quantity) || it.quantity < 1 || it.quantity > WEB_ORDER_MAX_QTY) {
+          throw new PosError('INVALID_QTY', 'Cantidad inválida');
+        }
+        this.cartAdd(cart.id, it.productId, it.quantity);
+      }
+      return this.holdCart(cart.id, { customerName: name, phone, email, channel: 'web', note });
+    } catch (err) {
+      this.releaseAll(this.cartOf(cart.id));
+      delete this.state.carts[cart.id];
+      throw err;
+    }
   }
 
   // ---------- reportes ----------

@@ -5,6 +5,7 @@
  *   npm run cliente -- clave 76123456-0 nueva-clave
  *   npm run cliente -- desactivar 76123456-0
  *   npm run cliente -- activar 76123456-0
+ *   npm run cliente -- tienda 76123456-0 activar [nombre-en-la-url]   (plan tienda web; también: desactivar)
  *   npm run cliente -- respaldar     (copia de todo ahora)
  *   npm run cliente -- respaldos     (lista las copias)
  */
@@ -17,7 +18,8 @@ const [cmd, ...args] = process.argv.slice(2);
 const manager = new TenantManager(new FileTenantStorage(DATA_DIR));
 const backupDir = process.env.BACKUP_DIR ?? path.join(DATA_DIR, 'backups');
 const backups = new BackupService(backupDir, undefined, Number(process.env.BACKUP_KEEP_DAYS ?? 30));
-const show = (t: { rut: string; name: string; active: boolean }) => `${t.rut}  ${t.name}  ${t.active ? 'activo' : 'DESACTIVADO'}`;
+const show = (t: { rut: string; name: string; active: boolean; webStore?: boolean; slug?: string }) =>
+  `${t.rut}  ${t.name}  ${t.active ? 'activo' : 'DESACTIVADO'}${t.webStore ? `  tienda: /t/${t.slug}` : ''}`;
 
 try {
   switch (cmd) {
@@ -45,6 +47,12 @@ try {
       console.log('Listo:', show(manager.setActive(args[0], cmd === 'activar')));
       break;
     }
+    case 'tienda': {
+      const [rut, accion, slug] = args;
+      if (!rut || (accion !== 'activar' && accion !== 'desactivar')) throw new TenantError('INVALID_DATA', 'Uso: tienda <rut> activar [nombre-en-la-url] | desactivar');
+      console.log('Listo:', show(manager.setWebStore(rut, accion === 'activar', slug)));
+      break;
+    }
     case 'respaldar': {
       const m = backups.create(manager.exportAll(), { force: true, reason: 'manual (comando)' });
       backups.prune();
@@ -58,7 +66,7 @@ try {
       break;
     }
     default:
-      console.log('Comandos: crear <rut> "<nombre>" <clave> | listar | clave <rut> <nueva> | desactivar <rut> | activar <rut> | respaldar | respaldos');
+      console.log('Comandos: crear <rut> "<nombre>" <clave> | listar | clave <rut> <nueva> | desactivar <rut> | activar <rut> | tienda <rut> activar|desactivar [nombre] | respaldar | respaldos');
   }
 } catch (e) {
   console.error(e instanceof TenantError ? `Error: ${e.message}` : e);

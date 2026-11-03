@@ -51,6 +51,7 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
           <li><b>Pendiente de pago:</b> se cobra cuando el cliente retire (botón <i>Cobrar</i> en Pedidos).</li>
           <li><b>Ya pagó:</b> se cobra y se registra la venta al guardar; luego se marca <i>Entregado</i>.</li>
         </ul>
+        <p><b>Pedidos de la tienda web:</b> si tu negocio tiene tienda web, cada pedido de un cliente llega a <i>Pedidos</i> como pendiente de pago (canal Web) y te avisamos; lo armas, y cuando el cliente retira lo retomas con <i>Cobrar</i>, porque en la tienda web no se paga por internet.</p>
         <p>Desde <i>Pedidos → WhatsApp</i> elige una plantilla (pedido listo, en preparación, detalle, aviso), revisa el número y el mensaje y pulsa <i>Abrir WhatsApp</i>. A los números de 9 dígitos se les agrega +56. Usa un enlace de WhatsApp, sin API: confirmas el envío allí.</p>
       </>
     ),

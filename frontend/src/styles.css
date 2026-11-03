@@ -173,6 +173,8 @@ ul.plain { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13px; color
 .field input, .field select, .field textarea, .checkout input, .inline input, .filters input[type=date], .head-actions + input, .page-head input {
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); font-weight: 400;
 }
+.inline select { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
+.inline select option { background: var(--bg); color: inherit; }
 .field small { font-weight: 400; color: var(--muted); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

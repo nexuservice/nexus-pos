@@ -21,7 +21,7 @@ const SECTIONS: [Section, string][] = [
 
 const Err = ({ text }: { text: string | null }) => (text ? <div className="alert" role="alert">{text}</div> : null);
 
-export function AdminView({ api, branchId }: { api: PosApi; branchId: string | null }) {
+export function AdminView({ api, branchId, storeSlug }: { api: PosApi; branchId: string | null; storeSlug?: string | null }) {
   const [section, setSection] = useState<Section>('products');
   return (
     <div className="admin">
@@ -31,7 +31,7 @@ export function AdminView({ api, branchId }: { api: PosApi; branchId: string | n
       <div className="admin-body">
         {section === 'products' && <Products api={api} branchId={branchId} />}
         {section === 'receive' && <ReceiveSection api={api} branchId={branchId} />}
-        {section === 'business' && <BusinessSection api={api} />}
+        {section === 'business' && <BusinessSection api={api} storeSlug={storeSlug} />}
         {section === 'purchases' && <PurchasesSection api={api} branchId={branchId} />}
         {section === 'clients' && <Clients api={api} />}
         {section === 'cashiers' && <Cashiers api={api} />}

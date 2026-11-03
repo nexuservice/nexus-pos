@@ -93,12 +93,12 @@ export function createApp(opts: AppOptions) {
     }
     limiter.reset(key);
     const exp = Date.now() + ttl;
-    res.json({ token: signToken({ tid: tenant.id, exp }, secret), expiresAt: exp, business: { name: tenant.name, rut: tenant.rut } });
+    res.json({ token: signToken({ tid: tenant.id, exp }, secret), expiresAt: exp, business: { name: tenant.name, rut: tenant.rut, webStore: !!tenant.webStore, slug: tenant.slug ?? null } });
   });
 
   app.get('/api/auth/me', requireTenant(), (_req, res) => {
     const t = manager.get(res.locals.tid)!;
-    res.json({ name: t.name, rut: t.rut });
+    res.json({ name: t.name, rut: t.rut, webStore: !!t.webStore, slug: t.slug ?? null });
   });
 
   // ---------- datos del negocio (todo pasa por el motor del negocio de la sesión) ----------
@@ -168,6 +168,56 @@ export function createApp(opts: AppOptions) {
     req.on('close', () => off());
   });
 
+  // ---------- tienda web pública (sin sesión; solo negocios con el plan) ----------
+  // No pasa por /api/rpc: el público solo puede ver el catálogo y dejar un pedido, nada más del motor.
+  const publicHits = new Map<string, number[]>();
+  const tooMany = (key: string, max: number, windowMs: number): boolean => {
+    const now = Date.now();
+    const hits = (publicHits.get(key) ?? []).filter((t) => now - t < windowMs);
+    hits.push(now);
+    publicHits.set(key, hits);
+    if (publicHits.size > 5000) for (const [k, v] of publicHits) if (now - (v[v.length - 1] ?? 0) > windowMs) publicHits.delete(k);
+    return hits.length > max;
+  };
+  const publicStore = (req: Request, res: Response) => {
+    const tenant = manager.bySlug(String(req.params.slug));
+    if (!tenant) { res.status(404).json({ code: 'NOT_FOUND', message: 'Esta tienda no existe o no está disponible' }); return null; }
+    return tenant;
+  };
+
+  app.get('/api/public/:slug', (req, res, next) => {
+    try {
+      if (tooMany(`pub|${req.ip}`, 120, 60_000)) return res.status(429).json({ code: 'TOO_MANY', message: 'Demasiadas consultas. Espera un momento.' });
+      const tenant = publicStore(req, res);
+      if (!tenant) return;
+      const engine = manager.engine(tenant.id);
+      const b = engine.getBusiness();
+      res.set('Cache-Control', 'no-store');
+      res.json({ business: { name: b.name, direccion: b.direccion ?? null, comuna: b.comuna ?? null, phone: b.phone ?? null }, products: engine.publicCatalog() });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post('/api/public/:slug/orders', (req, res, next) => {
+    try {
+      if (tooMany(`order|${req.ip}`, 10, 3_600_000)) return res.status(429).json({ code: 'TOO_MANY', message: 'Hiciste varios pedidos seguidos. Intenta más tarde o llama al negocio.' });
+      const tenant = publicStore(req, res);
+      if (!tenant) return;
+      const b = (req.body ?? {}) as Json;
+      const items = Array.isArray(b.items) ? b.items.map((i) => ({ productId: String((i as Json)?.productId ?? ''), quantity: Number((i as Json)?.quantity) })) : [];
+      const engine = manager.engine(tenant.id);
+      const ticket = engine.placeWebOrder({
+        items, customerName: String(b.customerName ?? ''), phone: String(b.phone ?? ''),
+        email: typeof b.email === 'string' ? b.email : undefined, note: typeof b.note === 'string' ? b.note : undefined,
+      });
+      manager.save(tenant.id);
+      res.status(201).json({ number: ticket.number, totalClp: ticket.totalClp, lines: ticket.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitPriceClp: l.unitPriceClp })) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // ---------- administración (solo tú) ----------
   app.get('/api/admin/tenants', requireAdmin, (_req, res) => { res.json(manager.list()); });
 
@@ -187,6 +237,7 @@ export function createApp(opts: AppOptions) {
       let out = manager.list().find((t) => t.rut === (isValidRut(rut) ? normalizeRut(rut) : rut));
       if (typeof b.active === 'boolean') out = manager.setActive(rut, b.active);
       if (typeof b.password === 'string') out = manager.setPassword(rut, b.password);
+      if (typeof b.webStore === 'boolean') out = manager.setWebStore(rut, b.webStore, typeof b.slug === 'string' ? b.slug : undefined);
       if (!out) return res.status(404).json({ code: 'NOT_FOUND', message: 'No existe un cliente con ese RUT' });
       res.json(out);
     } catch (e) {

@@ -113,10 +113,10 @@ describe('inicio de sesión', () => {
   it('entra con RUT (con o sin puntos) y clave correcta', async () => {
     const a = await call('POST', '/api/auth/login', { body: { rut: '12.345.678-5', password: PEPE.password } });
     expect(a.status).toBe(200);
-    expect(a.body.business).toEqual({ name: 'Almacén Don Pepe', rut: '12345678-5' });
+    expect(a.body.business).toEqual({ name: 'Almacén Don Pepe', rut: '12345678-5', webStore: false, slug: null });
     expect((await call('POST', '/api/auth/login', { body: { rut: '123456785', password: PEPE.password } })).status).toBe(200);
     const me = await call('GET', '/api/auth/me', { token: a.body.token });
-    expect(me.body).toEqual({ name: 'Almacén Don Pepe', rut: '12345678-5' });
+    expect(me.body).toEqual({ name: 'Almacén Don Pepe', rut: '12345678-5', webStore: false, slug: null });
   });
 
   it('da el mismo error si el RUT no existe o la clave es mala (no delata cuentas)', async () => {
@@ -206,5 +206,72 @@ describe('aislamiento entre clientes y persistencia', () => {
     expect(r.status).toBe(404);
     expect(r.body.code).toBe('NOT_FOUND');
     expect((await call('POST', '/api/rpc/borrarTodo', { token: t, body: { args: [] } })).status).toBe(404);
+  });
+});
+
+describe('tienda web pública', () => {
+  async function conTienda(slug?: string) {
+    await createTenant(PEPE);
+    const token = await login(PEPE);
+    const r = await rpc(token, 'receiveStock', 'branch_1', { barcode: '7801', name: 'Leche 1L', category: 'Lácteos', priceNetClp: 1000, costClp: 700, quantity: 5, channel: 'online' });
+    await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: true, ...(slug ? { slug } : {}) } });
+    return { token, productId: r.body.product.id as string };
+  }
+
+  it('sin el plan la tienda no existe; con el plan responde sin sesión y sin datos internos', async () => {
+    await createTenant(PEPE);
+    expect((await call('GET', '/api/public/almacen-don-pepe')).status).toBe(404);
+    const { productId } = await conTienda();
+    const r = await call('GET', '/api/public/almacen-don-pepe');
+    expect(r.status).toBe(200);
+    expect(r.body.business.name).toBe('Almacén Don Pepe');
+    expect(r.body.products).toEqual([{ id: productId, name: 'Leche 1L', category: 'Lácteos', priceClp: 1190, available: 5 }]);
+    expect(JSON.stringify(r.body)).not.toMatch(/cost|passwordHash|12345678/);
+  });
+
+  it('desactivar el plan o el cliente cierra la tienda', async () => {
+    await conTienda();
+    await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: false } });
+    expect((await call('GET', '/api/public/almacen-don-pepe')).status).toBe(404);
+    await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: true } });
+    expect((await call('GET', '/api/public/almacen-don-pepe')).status).toBe(200);
+    await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { active: false } });
+    expect((await call('GET', '/api/public/almacen-don-pepe')).status).toBe(404);
+  });
+
+  it('un pedido reserva stock, aparece en Pedidos del negocio y el precio lo pone el servidor', async () => {
+    const { token, productId } = await conTienda();
+    const o = await call('POST', '/api/public/almacen-don-pepe/orders', {
+      body: { items: [{ productId, quantity: 2, unitPriceClp: 1 }], customerName: 'Ana', phone: '+56 9 8765 4321' },
+    });
+    expect(o.status).toBe(201);
+    expect(o.body.totalClp).toBe(2380);
+    expect((await call('GET', '/api/public/almacen-don-pepe')).body.products[0].available).toBe(3);
+    const tickets = (await rpc(token, 'listTickets')).body;
+    expect(tickets).toHaveLength(1);
+    expect(tickets[0]).toMatchObject({ channel: 'web', paid: false, customerName: 'Ana' });
+    const sobra = await call('POST', '/api/public/almacen-don-pepe/orders', { body: { items: [{ productId, quantity: 4 }], customerName: 'Beto', phone: '+56 9 8765 4321' } });
+    expect(sobra.status).toBe(409);
+  });
+
+  it('el público no puede usar el motor ni ver otra tienda', async () => {
+    await conTienda();
+    expect((await call('POST', '/api/rpc/listTickets', { body: { args: [] } })).status).toBe(401);
+    expect((await call('POST', '/api/public/otra/orders', { body: { items: [], customerName: 'x', phone: '12345678' } })).status).toBe(404);
+  });
+
+  it('valida el nombre de la tienda y que no se repita', async () => {
+    await createTenant(PEPE);
+    await createTenant(LUCIA);
+    const set = (rut: string, slug: string) => call('PATCH', `/api/admin/tenants/${rut}`, { admin: ADMIN, body: { webStore: true, slug } });
+    expect((await set('12345678-5', 'Mal Nombre!')).status).toBe(400);
+    expect((await set('12345678-5', 'don-pepe')).status).toBe(200);
+    expect((await set('11111111-1', 'don-pepe')).status).toBe(409);
+  });
+
+  it('la sesión informa si el negocio tiene tienda', async () => {
+    const { token } = await conTienda('pepe');
+    const me = await call('GET', '/api/auth/me', { token });
+    expect(me.body).toMatchObject({ webStore: true, slug: 'pepe' });
   });
 });

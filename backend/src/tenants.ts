@@ -12,7 +12,14 @@ export interface TenantRecord {
   passwordHash: string;
   active: boolean;
   createdAt: string;
+  /** Nombre en la dirección pública de su tienda web (/t/<slug>). Solo existe si contrató el plan. */
+  slug?: string;
+  /** Plan «tienda web» contratado. Los clientes antiguos no lo tienen: se tratan como sin tienda. */
+  webStore?: boolean;
 }
+export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
+export const slugify = (s: string): string =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
 export type PublicTenant = Omit<TenantRecord, 'passwordHash'>;
 
 /** Todo lo que hay que guardar para poder reconstruir el sistema: la lista de clientes y el estado de cada negocio. */
@@ -157,6 +164,27 @@ export class TenantManager {
     const rec = this.byRut(rut);
     if (!rec) throw new TenantError('NOT_FOUND', 'No existe un cliente con ese RUT');
     rec.active = active;
+    this.persist();
+    return this.pub(rec);
+  }
+
+  /** Negocio con tienda web activa, por el nombre de su dirección pública. Cualquier otro caso devuelve undefined (sin delatar cuál). */
+  bySlug(slug: string): TenantRecord | undefined {
+    this.sync();
+    return this.records.find((r) => r.slug === slug && r.active && r.webStore);
+  }
+
+  /** Activa o desactiva la tienda web de un cliente. Al activar por primera vez, el nombre de la dirección sale del negocio si no se indica. */
+  setWebStore(rut: string, enabled: boolean, slug?: string): PublicTenant {
+    const rec = this.byRut(rut);
+    if (!rec) throw new TenantError('NOT_FOUND', 'No existe un cliente con ese RUT');
+    if (enabled) {
+      const wanted = (slug?.trim() || rec.slug || slugify(rec.name)).toLowerCase();
+      if (!SLUG_RE.test(wanted)) throw new TenantError('INVALID_DATA', 'El nombre de la tienda debe tener 3 a 40 letras minúsculas, números o guiones');
+      if (this.records.some((r) => r.id !== rec.id && r.slug === wanted)) throw new TenantError('DUPLICATE', 'Ese nombre de tienda ya está en uso');
+      rec.slug = wanted;
+    }
+    rec.webStore = enabled;
     this.persist();
     return this.pub(rec);
   }

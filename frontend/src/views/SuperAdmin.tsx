@@ -123,12 +123,13 @@ export function SuperAdminView({ base }: { base: string }) {
       </section>
 
       <div className="table-wrap"><table>
-        <thead><tr><th>RUT</th><th>Negocio</th><th>Creado</th><th>Estado</th><th /></tr></thead>
+        <thead><tr><th>RUT</th><th>Negocio</th><th>Creado</th><th>Estado</th><th>Tienda web</th><th /></tr></thead>
         <tbody>
           {rows.map((t) => (
             <tr key={t.id}>
               <td>{t.rut}</td><td>{t.name}</td><td>{fmtDate(t.createdAt)}</td>
               <td><span className={'pill ' + (t.active ? 'ok' : 'bad')}>{t.active ? 'activo' : 'desactivado'}</span></td>
+              <td><WebStoreCell t={t} onSave={(on, slug) => act(() => client.setWebStore(t.rut, on, slug))} /></td>
               <td>
                 <button className="btn ghost sm" onClick={() => act(() => client.setActive(t.rut, !t.active))}>{t.active ? 'Desactivar' : 'Activar'}</button>{' '}
                 <button className="btn ghost sm" onClick={() => {
@@ -139,7 +140,7 @@ export function SuperAdminView({ base }: { base: string }) {
               </td>
             </tr>
           ))}
-          {!rows.length && <tr><td colSpan={5} className="empty">Aún no hay clientes</td></tr>}
+          {!rows.length && <tr><td colSpan={6} className="empty">Aún no hay clientes</td></tr>}
         </tbody>
       </table></div>
 
@@ -197,4 +198,34 @@ function RestoreModal(props: { tenant: TenantInfo; backups: BackupInfo[]; onClos
       </div>
     </Modal>
   );
+}
+
+const SLUG_RE = /^[a-z0-9-]{3,40}$/;
+
+/** Interruptor de la tienda web de un cliente: al activar pide el nombre que irá en la dirección /t/<nombre>. */
+function WebStoreCell({ t, onSave }: { t: TenantInfo; onSave: (on: boolean, slug?: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [slug, setSlug] = useState(t.slug ?? '');
+  const valid = SLUG_RE.test(slug);
+  if (t.webStore && !editing) {
+    const url = `${location.origin}/t/${t.slug}`;
+    return (
+      <span>
+        <span className="pill ok">activa</span> <a href={url} target="_blank" rel="noreferrer"><code>/t/{t.slug}</code></a>{' '}
+        <button className="btn ghost sm" onClick={() => navigator.clipboard?.writeText(url)}>Copiar</button>{' '}
+        <button className="btn ghost sm" onClick={() => setEditing(true)}>Cambiar</button>{' '}
+        <button className="btn ghost sm" onClick={() => onSave(false)}>Desactivar</button>
+      </span>
+    );
+  }
+  if (editing || !t.webStore && slug) {
+    return (
+      <span className="inline">
+        <input aria-label="Nombre en la dirección" placeholder="mi-negocio" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} style={{ width: 130 }} />
+        <button className="btn primary sm" disabled={!valid} title="3 a 40 letras minúsculas, números o guiones" onClick={() => { onSave(true, slug); setEditing(false); }}>Guardar</button>
+        {editing && <button className="btn ghost sm" onClick={() => { setEditing(false); setSlug(t.slug ?? ''); }}>Cancelar</button>}
+      </span>
+    );
+  }
+  return <button className="btn ghost sm" onClick={() => { setSlug(''); setEditing(true); }}>Activar…</button>;
 }

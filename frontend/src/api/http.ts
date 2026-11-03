@@ -105,6 +105,8 @@ export interface TenantInfo {
   name: string;
   active: boolean;
   createdAt: string;
+  webStore?: boolean;
+  slug?: string | null;
 }
 
 /** Administración de clientes (solo con la clave de administrador). */
@@ -115,6 +117,8 @@ export function createAdminClient(base: string, adminKey: string) {
     create: (rut: string, name: string, password: string) => request<TenantInfo>(base, 'POST', '/api/admin/tenants', { rut, name, password }, h),
     setActive: (rut: string, active: boolean) => request<TenantInfo>(base, 'PATCH', `/api/admin/tenants/${encodeURIComponent(rut)}`, { active }, h),
     setPassword: (rut: string, password: string) => request<TenantInfo>(base, 'PATCH', `/api/admin/tenants/${encodeURIComponent(rut)}`, { password }, h),
+    setWebStore: (rut: string, webStore: boolean, slug?: string) =>
+      request<TenantInfo>(base, 'PATCH', `/api/admin/tenants/${encodeURIComponent(rut)}`, { webStore, ...(slug ? { slug } : {}) }, h),
     backups: () => request<BackupInfo[]>(base, 'GET', '/api/admin/backups', undefined, h),
     createBackup: () => request<BackupInfo>(base, 'POST', '/api/admin/backups', {}, h),
     /** Texto JSON del respaldo completo, o solo el del cliente con ese RUT. */

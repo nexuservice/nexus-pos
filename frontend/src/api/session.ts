@@ -2,7 +2,9 @@ export interface Session {
   token: string;
   /** Vencimiento, en ms desde epoch. */
   expiresAt: number;
-  business: { name: string; rut: string };
+  business: { name: string; rut: string; webStore?: boolean; slug?: string | null };
+  webStore?: boolean;
+  slug?: string | null;
 }
 
 const KEY = 'nexus-session';

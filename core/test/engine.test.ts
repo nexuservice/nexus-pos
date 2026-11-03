@@ -1072,3 +1072,87 @@ describe('API remota (RPC)', () => {
     for (const m of RPC_METHODS) expect(typeof (e as unknown as Record<string, unknown>)[m], m).toBe('function');
   });
 });
+
+describe('tienda web pública', () => {
+  const cliente = { customerName: 'Ana Pérez', phone: '+56 9 1234 5678' };
+
+  it('el catálogo público no expone costos ni códigos internos y usa el stock online', () => {
+    const e = make();
+    const cat = e.publicCatalog();
+    expect(cat.length).toBeGreaterThan(0);
+    for (const p of cat) {
+      expect(Object.keys(p).sort()).toEqual(['available', 'category', 'id', 'name', 'priceClp']);
+      expect(p.available).toBe(e.available(B, p.id, 'online'));
+    }
+  });
+
+  it('un pedido web reserva el stock online y queda abierto sin pagar', () => {
+    const e = make();
+    const antes = e.available(B, COLA, 'online');
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 2 }] });
+    expect(t.channel).toBe('web');
+    expect(t.paid).toBe(false);
+    expect(t.totalClp).toBe(1990 * 2);
+    expect(e.available(B, COLA, 'online')).toBe(antes - 2);
+    expect(e.publicCatalog().find((p) => p.id === COLA)!.available).toBe(antes - 2);
+  });
+
+  it('es todo o nada: si un producto no alcanza no queda nada reservado', () => {
+    const e = make();
+    const cola = e.available(B, COLA, 'online');
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }, { productId: AGUA, quantity: 9999 }] }))
+      .toThrow(PosError);
+    expect(e.available(B, COLA, 'online')).toBe(cola);
+    expect(e.listTickets()).toHaveLength(0);
+  });
+
+  it('valida los datos del cliente y las cantidades', () => {
+    const e = make();
+    const items = [{ productId: COLA, quantity: 1 }];
+    expect(() => e.placeWebOrder({ ...cliente, customerName: ' ', items })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, phone: '12', items })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, email: 'malo', items })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [] })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: -1 }] })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1.5 }] })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: 'no_existe', quantity: 1 }] })).toThrow(PosError);
+  });
+
+  it('los pedidos web sin pagar vencen y devuelven el stock', () => {
+    let hoy = new Date('2026-03-10T12:00:00Z');
+    const e = make({}, { now: () => hoy });
+    const antes = e.available(B, COLA, 'online');
+    e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 3 }] });
+    hoy = new Date('2026-03-10T20:00:00Z');
+    expect(e.expireWebOrders()).toBe(0);
+    hoy = new Date('2026-03-11T13:00:00Z');
+    expect(e.expireWebOrders()).toBe(1);
+    expect(e.available(B, COLA, 'online')).toBe(antes);
+    expect(e.listTickets()).toHaveLength(0);
+  });
+
+  it('el cajero puede cancelar un pedido web y se libera el stock', () => {
+    const e = make();
+    const antes = e.available(B, COLA, 'online');
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] });
+    e.cancelTicket(t.id);
+    expect(e.available(B, COLA, 'online')).toBe(antes);
+  });
+
+  it('el cajero cobra un pedido web en efectivo, sin correo, y se descuenta el stock online', async () => {
+    const e = make();
+    const antes = e.available(B, COLA, 'online');
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 2 }] });
+    const cart = e.resumeTicket(t.id);
+    const paid = await payCart(e, fast(), { cartId: cart.id, method: 'cash', receivedClp: 5000 });
+    expect(paid.status).toBe('approved');
+    expect(e.available(B, COLA, 'online')).toBe(antes - 2);
+  });
+
+  it('sin jornada abierta no se cobra un pedido web en caja', () => {
+    const e = make({}, {}, false);
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] });
+    const cart = e.resumeTicket(t.id);
+    expect(() => e.beginPayment(cart.id, 'cash', null, null, 5000)).toThrow(PosError);
+  });
+});
