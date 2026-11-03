@@ -229,6 +229,12 @@ describe('tienda web pública', () => {
     expect(JSON.stringify(r.body)).not.toMatch(/cost|passwordHash|12345678/);
   });
 
+  it('el nombre de la tienda no distingue mayúsculas de minúsculas', async () => {
+    await conTienda();
+    expect((await call('GET', '/api/public/ALMACEN-DON-PEPE')).status).toBe(200);
+    expect((await call('GET', '/api/public/Almacen-Don-Pepe')).status).toBe(200);
+  });
+
   it('desactivar el plan o el cliente cierra la tienda', async () => {
     await conTienda();
     await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: false } });

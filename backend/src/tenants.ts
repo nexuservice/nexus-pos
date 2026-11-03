@@ -171,7 +171,8 @@ export class TenantManager {
   /** Negocio con tienda web activa, por el nombre de su dirección pública. Cualquier otro caso devuelve undefined (sin delatar cuál). */
   bySlug(slug: string): TenantRecord | undefined {
     this.sync();
-    return this.records.find((r) => r.slug === slug && r.active && r.webStore);
+    const wanted = String(slug ?? '').toLowerCase();
+    return this.records.find((r) => r.slug === wanted && r.active && r.webStore);
   }
 
   /** Activa o desactiva la tienda web de un cliente. Al activar por primera vez, el nombre de la dirección sale del negocio si no se indica. */
