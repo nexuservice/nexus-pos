@@ -22,7 +22,7 @@ ENV NODE_ENV=production \
     NEXUS_DATA=/data
 
 # Los datos viven en /data: monta ahí un disco persistente (volumen). Sin él, se pierden al reiniciar.
-VOLUME ["/data"]
+# No se usa la instrucción VOLUME: Railway la rechaza y Fly/Render/Railway montan el disco por fuera.
 EXPOSE 8080
 
 # Corre como root a propósito: los volúmenes de Fly y Railway se montan con dueño root y un usuario normal no podría escribir.
