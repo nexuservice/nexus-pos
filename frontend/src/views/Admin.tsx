@@ -106,13 +106,18 @@ function Products({ api, branchId }: { api: PosApi; branchId: string | null }) {
 
 function Clients({ api }: { api: PosApi }) {
   const [rows, reload] = useList(() => api.rpc.listClients());
-  const blank = { name: '', rut: '', email: '', phone: '', isVip: false, creditAuthorized: false };
+  const blank = { name: '', rut: '', email: '', phone: '', isVip: false, creditAuthorized: false, creditLimit: '' };
   const [f, setF] = useState<typeof blank & { id?: string }>(blank);
   const [open, setOpen] = useState(false);
   const [debtOf, setDebtOf] = useState<ClientWithDebt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
-    try { setError(null); await api.rpc.upsertClient(f); setOpen(false); setF(blank); await reload(); } catch (e) { setError(msg(e)); }
+    try {
+      setError(null);
+      const { creditLimit, ...rest } = f;
+      const digits = creditLimit.replace(/\D/g, '');
+      await api.rpc.upsertClient({ ...rest, creditLimitClp: f.creditAuthorized && digits ? Number(digits) : null });
+      setOpen(false); setF(blank); await reload(); } catch (e) { setError(msg(e)); }
   };
   return (
     <>
@@ -127,18 +132,25 @@ function Clients({ api }: { api: PosApi }) {
             <label className="field">Teléfono<input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
             <label className="check"><input type="checkbox" checked={f.isVip} onChange={(e) => setF({ ...f, isVip: e.target.checked })} /> Cliente VIP</label>
             <label className="check"><input type="checkbox" checked={f.creditAuthorized} onChange={(e) => setF({ ...f, creditAuthorized: e.target.checked })} /> Autorizado para convenio (crédito) — requiere RUT</label>
+            {f.creditAuthorized && (
+              <label className="field">Tope de convenio (CLP, vacío = sin tope)
+                <input inputMode="numeric" placeholder="Ej: 50000" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: e.target.value.replace(/[^\d]/g, '') })} />
+                <small>Lo máximo que puede deber. Al llegar al tope, la caja no deja vender a crédito hasta que abone.</small>
+              </label>
+            )}
           </div>
           <Err text={error} />
           <div className="row-btns"><button className="btn primary" onClick={save}>Guardar</button><button className="btn ghost" onClick={() => setOpen(false)}>Cancelar</button></div>
         </div>
       )}
       <div className="table-wrap"><table>
-        <thead><tr><th>Nombre</th><th>RUT</th><th>Correo</th><th>Teléfono</th><th>Convenio</th><th>Debe</th><th /></tr></thead>
+        <thead><tr><th>Nombre</th><th>RUT</th><th>Correo</th><th>Teléfono</th><th>Convenio</th><th>Cupo</th><th>Debe</th><th /></tr></thead>
         <tbody>{rows.map((c: ClientWithDebt) => (
           <tr key={c.id}><td>{c.name} {c.isVip && <span className="vip">VIP</span>}</td><td>{c.rut}</td><td>{c.email}</td><td>{c.phone}</td>
             <td><span className={'pill ' + (c.creditAuthorized ? 'ok' : 'bad')}>{c.creditAuthorized ? 'autorizado' : 'no'}</span></td>
+            <td>{!c.creditAuthorized ? '—' : c.availableCreditClp === null ? 'Sin tope' : c.availableCreditClp === 0 ? <span className="pill bad">Sin cupo</span> : <>{formatClp(c.availableCreditClp)} <small>de {formatClp(c.creditLimitClp ?? 0)}</small></>}</td>
             <td className={c.debtClp > 0 ? 'debt' : ''}>{formatClp(c.debtClp)}</td>
-            <td><button className="btn ghost sm" onClick={() => { setError(null); setF({ id: c.id, name: c.name, rut: c.rut ?? '', email: c.email ?? '', phone: c.phone ?? '', isVip: c.isVip, creditAuthorized: !!c.creditAuthorized }); setOpen(true); }}>Editar</button>{' '}
+            <td><button className="btn ghost sm" onClick={() => { setError(null); setF({ id: c.id, name: c.name, rut: c.rut ?? '', email: c.email ?? '', phone: c.phone ?? '', isVip: c.isVip, creditAuthorized: !!c.creditAuthorized, creditLimit: c.creditLimitClp != null ? String(c.creditLimitClp) : '' }); setOpen(true); }}>Editar</button>{' '}
               {c.debtClp > 0 && <><button className="btn primary sm" onClick={() => setDebtOf(c)}>Cobrar deuda</button>{' '}</>}
               <button className="btn ghost sm" onClick={async () => { if (confirm(`¿Eliminar a ${c.name}?`)) { try { await api.rpc.deleteClient(c.id); await reload(); } catch (e) { alert(msg(e)); } } }}>Eliminar</button></td></tr>))}</tbody>
       </table></div>

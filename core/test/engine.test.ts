@@ -1156,3 +1156,70 @@ describe('tienda web pública', () => {
     expect(() => e.beginPayment(cart.id, 'cash', null, null, 5000)).toThrow(PosError);
   });
 });
+
+describe('tope de convenio', () => {
+  const g = fast();
+  async function ventaConvenio(e: PosEngine, clientId: string, productId: string, qty = 1) {
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, productId, qty);
+    e.setCustomer(c.id, { clientId });
+    return { cart: c, run: () => payCart(e, g, { cartId: c.id, method: 'convenio' }) };
+  }
+
+  it('sin tope el cliente no tiene límite (compatibilidad con clientes anteriores)', async () => {
+    const e = make();
+    const cli = e.listClients().find((c) => c.id === 'cli_seed_1')!;
+    expect(cli.creditLimitClp).toBeUndefined();
+    expect(cli.availableCreditClp).toBeNull();
+    const { run } = await ventaConvenio(e, 'cli_seed_1', COLA, 3);
+    expect((await run()).status).toBe('approved');
+  });
+
+  it('guarda el tope, lo valida y no lo borra al editar sin enviarlo', () => {
+    const e = make();
+    const base = { id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true };
+    expect(e.upsertClient({ ...base, creditLimitClp: 5000 }).creditLimitClp).toBe(5000);
+    expect(e.upsertClient({ ...base, phone: '+56911112222' }).creditLimitClp).toBe(5000);
+    expect(() => e.upsertClient({ ...base, creditLimitClp: -1 })).toThrow(PosError);
+    expect(() => e.upsertClient({ ...base, creditLimitClp: 10.5 })).toThrow(PosError);
+    expect(e.upsertClient({ ...base, creditLimitClp: null }).creditLimitClp).toBeUndefined();
+  });
+
+  it('no deja vender a convenio más de lo que alcanza el cupo y dice cuánto le queda', async () => {
+    const e = make();
+    e.upsertClient({ id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true, creditLimitClp: 3000 });
+    const ok = await ventaConvenio(e, 'cli_seed_1', COLA); // $1.990
+    expect((await ok.run()).status).toBe('approved');
+    expect(e.clientBalance('cli_seed_1')).toMatchObject({ debtClp: 1990, creditLimitClp: 3000, availableCreditClp: 1010 });
+    const otra = await ventaConvenio(e, 'cli_seed_1', COLA);
+    expect(() => e.beginPayment(otra.cart.id, 'convenio')).toThrow(/solo tiene \$1\.010 de cupo/);
+    const agua = await ventaConvenio(e, 'cli_seed_1', AGUA); // $990 cabe
+    expect((await agua.run()).status).toBe('approved');
+    expect(e.clientBalance('cli_seed_1').availableCreditClp).toBe(20);
+  });
+
+  it('con el cupo agotado avisa que no tiene cupo, y un abono lo libera', async () => {
+    const e = make();
+    e.upsertClient({ id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true, creditLimitClp: 1990 });
+    expect((await (await ventaConvenio(e, 'cli_seed_1', COLA)).run()).status).toBe('approved');
+    const sin = await ventaConvenio(e, 'cli_seed_1', AGUA);
+    expect(() => e.beginPayment(sin.cart.id, 'convenio')).toThrow(/no tiene cupo/);
+    e.payClientDebt('cli_seed_1', 1990, 'cash');
+    expect(e.clientBalance('cli_seed_1').availableCreditClp).toBe(1990);
+    expect((await sin.run()).status).toBe('approved');
+  });
+
+  it('si el cupo se usa mientras otro cobro esperaba, ese cobro se rechaza al cerrar', () => {
+    const e = make();
+    e.upsertClient({ id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true, creditLimitClp: 2000 });
+    const a = e.createCart(B, 'physical'); e.cartAdd(a.id, COLA); e.setCustomer(a.id, { clientId: 'cli_seed_1' });
+    const b = e.createCart(B, 'physical'); e.cartAdd(b.id, COLA); e.setCustomer(b.id, { clientId: 'cli_seed_1' });
+    const pa = e.beginPayment(a.id, 'convenio').payment;
+    const pb = e.beginPayment(b.id, 'convenio').payment; // ambas caben mientras ninguna se cierra
+    expect(e.resolvePayment(pa.id, { approved: true }).status).toBe('approved');
+    const second = e.resolvePayment(pb.id, { approved: true });
+    expect(second.status).toBe('rejected');
+    expect(second.message).toMatch(/solo tiene \$10 de cupo/);
+    expect(e.clientBalance('cli_seed_1').debtClp).toBe(1990);
+  });
+});

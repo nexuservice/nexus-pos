@@ -341,7 +341,7 @@ export class PosEngine {
 
   // ---------- clientes, cajeros ----------
   listClients(): ClientWithDebt[] {
-    return clone(this.state.clients.map((c) => ({ ...c, debtClp: this.debtOf(c.id) })));
+    return clone(this.state.clients.map((c) => ({ ...c, debtClp: this.debtOf(c.id), availableCreditClp: this.creditAvailable(c) })));
   }
 
   /** Búsqueda por nombre o RUT (mínimo 2 caracteres, sin tildes ni puntos). Incluye lo que cada cliente debe. */
@@ -352,7 +352,7 @@ export class PosEngine {
       this.state.clients
         .filter((c) => norm(c.name).replace(/\s/g, '').includes(term) || (c.rut ?? '').replace(/[.\-]/g, '').toLowerCase().includes(term.replace(/-/g, '')))
         .slice(0, 8)
-        .map((c) => ({ ...c, debtClp: this.debtOf(c.id) })),
+        .map((c) => ({ ...c, debtClp: this.debtOf(c.id), availableCreditClp: this.creditAvailable(c) })),
     );
   }
 
@@ -367,6 +367,21 @@ export class PosEngine {
     return Math.max(0, sold - paid);
   }
 
+  /** Cupo que le queda al cliente: su tope menos lo que debe (nunca negativo). null si no tiene tope. */
+  private creditAvailable(client: Client): number | null {
+    if (client.creditLimitClp === undefined || client.creditLimitClp === null) return null;
+    return Math.max(0, client.creditLimitClp - this.debtOf(client.id));
+  }
+
+  /** Mensaje de error si la venta a convenio no cabe en el cupo del cliente; null si cabe o no hay tope. */
+  private creditShortfall(client: Client, totalClp: number): string | null {
+    const available = this.creditAvailable(client);
+    if (available === null || totalClp <= available) return null;
+    return available === 0
+      ? `${client.name} no tiene cupo de convenio disponible`
+      : `${client.name} solo tiene ${formatClp(available)} de cupo y esta venta es de ${formatClp(totalClp)}`;
+  }
+
   /** Lo que el cliente debe en total por ventas a convenio, con el detalle de ventas y abonos. */
   clientBalance(clientId: string): ClientBalance {
     const client = this.state.clients.find((c) => c.id === clientId);
@@ -378,6 +393,8 @@ export class PosEngine {
       clientName: client.name,
       clientRut: client.rut,
       debtClp: this.debtOf(clientId),
+      creditLimitClp: client.creditLimitClp,
+      availableCreditClp: this.creditAvailable(client),
       creditSalesClp: sales.reduce((n, s) => n + s.totalClp, 0),
       paidClp: payments.reduce((n, p) => n + p.amountClp, 0),
       sales: sales.map((s) => ({
@@ -404,7 +421,7 @@ export class PosEngine {
     return this.clientBalance(clientId);
   }
 
-  upsertClient(input: Partial<Client> & { name: string }): Client {
+  upsertClient(input: Partial<Omit<Client, 'creditLimitClp'>> & { name: string; creditLimitClp?: number | null }): Client {
     const name = input.name?.trim();
     if (!name) throw new PosError('INVALID_DATA', 'El nombre es obligatorio');
     let rut = input.rut?.trim() || undefined;
@@ -415,12 +432,20 @@ export class PosEngine {
     const existing = input.id ? this.state.clients.find((c) => c.id === input.id) : undefined;
     if (rut && this.state.clients.some((c) => c.rut === rut && c.id !== existing?.id)) throw new PosError('INVALID_DATA', 'Ya existe un cliente con ese RUT');
     const creditAuthorized = !!input.creditAuthorized;
+    // Sin la clave `creditLimitClp` en la entrada se conserva el tope actual; null o vacío lo quita.
+    let creditLimitClp = existing?.creditLimitClp;
+    if ('creditLimitClp' in input) {
+      const raw = input.creditLimitClp;
+      if (raw === null || raw === undefined) creditLimitClp = undefined;
+      else if (!Number.isInteger(raw) || raw < 0 || raw > 1_000_000_000) throw new PosError('INVALID_DATA', 'El tope de convenio debe ser un monto entero en pesos, de 0 en adelante');
+      else creditLimitClp = raw;
+    }
     if (creditAuthorized && !rut) throw new PosError('INVALID_DATA', 'Para autorizar convenio el cliente necesita RUT');
     if (existing) {
-      Object.assign(existing, { name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized });
+      Object.assign(existing, { name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized, creditLimitClp });
       return clone(existing);
     }
-    const c: Client = { id: this.id('cli'), name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized };
+    const c: Client = { id: this.id('cli'), name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized, ...(creditLimitClp !== undefined ? { creditLimitClp } : {}) };
     this.state.clients.push(c);
     return clone(c);
   }
@@ -691,6 +716,8 @@ export class PosEngine {
       const client = cart.customer.clientId ? this.state.clients.find((c) => c.id === cart.customer.clientId) : undefined;
       if (!client || !client.name || !client.rut) throw new PosError('CUSTOMER_REQUIRED', 'El convenio requiere un cliente registrado con nombre y RUT');
       if (!client.creditAuthorized) throw new PosError('METHOD_NOT_ALLOWED', `${client.name} no está autorizado para pagar con convenio`);
+      const short = this.creditShortfall(client, cart.totalClp);
+      if (short) throw new PosError('METHOD_NOT_ALLOWED', short);
     }
     let received: number | undefined;
     let change: number | undefined;
@@ -731,6 +758,19 @@ export class PosEngine {
       cart.status = 'open';
       this.emit(paymentId, 'rejected', payment.message);
       return clone(payment);
+    }
+
+    // Otro cobro a convenio del mismo cliente pudo usar el cupo mientras este esperaba: se vuelve a revisar al cerrar.
+    if (payment.method === 'convenio') {
+      const client = cart.customer.clientId ? this.state.clients.find((c) => c.id === cart.customer.clientId) : undefined;
+      const short = client ? this.creditShortfall(client, cart.totalClp) : null;
+      if (short) {
+        payment.status = 'rejected';
+        payment.message = short;
+        cart.status = 'open';
+        this.emit(paymentId, 'rejected', short);
+        return clone(payment);
+      }
     }
 
     const iso = this.now().toISOString();

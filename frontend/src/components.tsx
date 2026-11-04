@@ -125,14 +125,17 @@ export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: 
   const [items, setItems] = useState<ClientWithDebt[]>([]);
   const [idx, setIdx] = useState(-1);
   const [debt, setDebt] = useState<number | null>(null);
+  const [credit, setCredit] = useState<{ available: number | null; limit?: number }>({ available: null });
   const [debtOpen, setDebtOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => setText(customer.name ?? ''), [customer.name]);
 
   const loadDebt = async () => {
-    if (!customer.clientId) { setDebt(null); return; }
-    setDebt((await props.api.rpc.clientBalance(customer.clientId)).debtClp);
+    if (!customer.clientId) { setDebt(null); setCredit({ available: null }); return; }
+    const b = await props.api.rpc.clientBalance(customer.clientId);
+    setDebt(b.debtClp);
+    setCredit({ available: b.availableCreditClp, limit: b.creditLimitClp });
   };
   useEffect(() => { loadDebt().catch(() => setDebt(null)); }, [customer.clientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -201,6 +204,11 @@ export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: 
         <div className="credit-line">
           <span className={'credit-pill' + (customer.creditAuthorized ? ' ok' : '')}>{customer.creditAuthorized ? 'Convenio autorizado' : 'Sin convenio'}</span>
           <span>Debe en total: <b className={debt > 0 ? 'debt' : ''}>{formatClp(debt)}</b></span>
+          {customer.creditAuthorized && credit.available !== null && (
+            credit.available === 0
+              ? <span className="credit-pill" role="alert">⚠ Sin cupo de convenio (tope {formatClp(credit.limit ?? 0)})</span>
+              : <span>Cupo disponible: <b>{formatClp(credit.available)}</b> <small>de {formatClp(credit.limit ?? 0)}</small></span>
+          )}
           {debt > 0 && <button className="btn primary sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setDebtOpen(true)}>Pagar deuda</button>}
         </div>
       )}

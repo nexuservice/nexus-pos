@@ -40,11 +40,15 @@ export interface Client {
   isVip: boolean;
   /** Autorizado para pagar con convenio (a crédito). Exige RUT. */
   creditAuthorized?: boolean;
+  /** Tope de lo que puede deber a convenio (CLP entero). Sin valor = sin tope. */
+  creditLimitClp?: number;
 }
 
 /** Cliente con lo que debe en total por ventas a convenio (ya descontados sus abonos). */
 export interface ClientWithDebt extends Client {
   debtClp: number;
+  /** Cupo que le queda (tope menos deuda, nunca negativo). null si no tiene tope. */
+  availableCreditClp: number | null;
 }
 
 /** Abono a la deuda de convenio de un cliente. */
@@ -63,6 +67,9 @@ export interface ClientBalance {
   clientName: string;
   clientRut?: string;
   debtClp: number;
+  /** Tope de convenio del cliente y cupo que le queda. Sin tope: undefined y null. */
+  creditLimitClp?: number;
+  availableCreditClp: number | null;
   /** Total vendido a convenio (sin las ventas anuladas). */
   creditSalesClp: number;
   paidClp: number;
