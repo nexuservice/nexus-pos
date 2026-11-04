@@ -3,6 +3,7 @@ import { API_URL, clearSession, createHttpApi, loadSession, saveSession, type Po
 import { Dropdown } from './components';
 import { clampScale, SettingsProvider, useSettings } from './settings';
 import { download, setPrintBusiness } from './format';
+import { ActiveShiftProvider, clearActiveShift } from './activeShift';
 import { PosView } from './views/Pos';
 import { StoreView } from './views/Store';
 import { PanelView } from './views/Panel';
@@ -163,6 +164,7 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
 
   const go = (t: string) => setTab(t as Tab);
   return (
+    <ActiveShiftProvider>
     <div className="app">
       <header className="top">
         <div className="brand"><span className="logo">N</span> Nexus<small>{session.business.name}</small></div>
@@ -183,6 +185,7 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
         {tab === 'help' && <HelpView />}
       </main>
     </div>
+    </ActiveShiftProvider>
   );
 }
 
@@ -204,6 +207,7 @@ export default function App() {
 
   const logout = (msg?: string) => {
     clearSession();
+    clearActiveShift();
     setSession(null);
     setNotice(msg ?? null);
   };
