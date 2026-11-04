@@ -257,6 +257,88 @@ describe('jornada (turno de caja)', () => {
   });
 });
 
+describe('varias cajas abiertas a la vez', () => {
+  /** Dos cajas abiertas: Cajero 1 (cashier_1) y Cajero 2, cada una con su fondo. */
+  function dos() {
+    const e = make();
+    const c2 = e.upsertCashier({ name: 'Cajero 2', pin: '4321' });
+    const s2 = e.openShift(c2.id, '4321', 20_000);
+    const s1 = e.openShifts().find((s) => s.cashierId === 'cashier_1')!;
+    return { e, s1, s2 };
+  }
+
+  it('permite abrir otra caja con otro cajero, pero no dos del mismo cajero', () => {
+    const { e, s1, s2 } = dos();
+    expect(e.openShifts().map((s) => s.id).sort()).toEqual([s1.id, s2.id].sort());
+    expect(() => e.openShift('cashier_1', '1234', 0)).toThrow(/ya tiene una jornada abierta/);
+    expect(() => e.openShift(s2.cashierId, '0000', 0)).toThrow(/PIN/);
+  });
+
+  it('con varias cajas abiertas hay que elegir en cuál operar', () => {
+    const { e } = dos();
+    expect(e.currentShift()).toBeNull();
+    expect(e.shiftInfo()).toBeNull();
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, COLA, 1);
+    expect(() => e.beginPayment(c.id, 'cash')).toThrow(/elige en cuál/);
+    expect(() => e.closeShift({})).toThrow(/elige en cuál/);
+  });
+
+  it('cada venta cae en la caja de su carrito y el arqueo de cada una es independiente', async () => {
+    const { e, s1, s2 } = dos();
+    const g = fast();
+    const a = e.createCart(B, 'physical', null, s1.id); e.cartAdd(a.id, COLA, 1);
+    const b = e.createCart(B, 'physical', null, s2.id); e.cartAdd(b.id, AGUA, 2);
+    await payCart(e, g, { cartId: a.id, method: 'cash', receivedClp: 2000 });
+    await payCart(e, g, { cartId: b.id, method: 'cash', receivedClp: 2000 });
+    expect(e.shiftInfo(s1.id)).toMatchObject({ salesCount: 1, salesTotalClp: 1990, expected: { cash: 10_000 + 1990 } });
+    expect(e.shiftInfo(s2.id)).toMatchObject({ salesCount: 1, salesTotalClp: 1980, expected: { cash: 20_000 + 1980 } });
+    expect(e.listSales({ shiftId: s2.id }).map((v) => v.cashierName)).toEqual(['Cajero 2']);
+    const closed = e.closeShift({ cash: 21_980 }, null, s2.id);
+    expect(closed).toMatchObject({ status: 'closed', salesCount: 1, difference: { cash: 0 } });
+    // La otra caja sigue abierta y operando; ahora es la única, así que ya no hace falta elegir.
+    expect(e.currentShift()?.id).toBe(s1.id);
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA, 1);
+    await payCart(e, g, { cartId: c.id, method: 'cash', receivedClp: 2000 });
+    expect(e.shiftInfo(s1.id)!.salesCount).toBe(2);
+  });
+
+  it('un carrito de una caja ya cerrada no se puede cobrar, pero se puede pasar a otra', async () => {
+    const { e, s1, s2 } = dos();
+    const c = e.createCart(B, 'physical', null, s2.id); e.cartAdd(c.id, COLA, 1);
+    e.closeShift({ cash: 20_000 }, null, s2.id);
+    expect(() => e.beginPayment(c.id, 'cash')).toThrow(/ya está cerrada/);
+    expect(() => e.assignCartShift(c.id, s2.id)).toThrow(/ya está cerrada/);
+    e.assignCartShift(c.id, s1.id);
+    await payCart(e, fast(), { cartId: c.id, method: 'cash', receivedClp: 2000 });
+    expect(e.shiftInfo(s1.id)!.salesCount).toBe(1);
+  });
+
+  it('el abono de un convenio y el consumo propio entran a la caja indicada', () => {
+    const { e, s2 } = dos();
+    expect(() => e.registerConsumption(e.createCart(B, 'physical').id)).toThrow(/vacío|elige en cuál/);
+    const k = e.createCart(B, 'physical', null, s2.id); e.cartAdd(k.id, COLA, 1);
+    expect(e.registerConsumption(k.id)).toMatchObject({ shiftId: s2.id, cashierName: 'Cajero 2' });
+    expect(() => e.payClientDebt('cli_seed_1', 100, 'cash')).toThrow(/elige en cuál/);
+  });
+
+  it('cerrar una caja no se bloquea por un cobro en curso de otra', async () => {
+    const { e, s1, s2 } = dos();
+    const a = e.createCart(B, 'physical', null, s1.id); e.cartAdd(a.id, COLA, 1);
+    e.beginPayment(a.id, 'debit'); // queda cobrando en la caja 1
+    expect(() => e.closeShift({ cash: 10_000 }, null, s1.id)).toThrow(/cobro en curso/);
+    expect(e.closeShift({ cash: 20_000 }, null, s2.id).status).toBe('closed');
+  });
+
+  it('volver a entrar a una caja pide el PIN de su cajero', () => {
+    const { e, s2 } = dos();
+    expect(e.verifyShiftPin(s2.id, '4321').id).toBe(s2.id);
+    expect(() => e.verifyShiftPin(s2.id, '1234')).toThrow(/PIN/);
+    e.closeShift({ cash: 20_000 }, null, s2.id);
+    expect(() => e.verifyShiftPin(s2.id, '4321')).toThrow(/cerrada/);
+  });
+});
+
 describe('convenio (venta a crédito)', () => {
   const MARIA = 'cli_seed_1'; // autorizada
   const JUAN = 'cli_seed_2'; // sin convenio

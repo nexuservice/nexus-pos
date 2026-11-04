@@ -5,6 +5,7 @@ import type { PayPhase, SaleDetail } from './hooks';
 import type { PosApi } from './api/types';
 import { businessHeaderHtml, esc, estadoCuentaHtml, fmtDateTime, printHtml } from './format';
 import { msg } from './hooks';
+import { useActiveShift } from './activeShift';
 
 export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; xwide?: boolean; className?: string; header?: ReactNode }) {
   useEffect(() => {
@@ -42,6 +43,7 @@ export function Dropdown(props: { label: ReactNode; children: (close: () => void
 
 /** Deuda de convenio de un cliente: detalle y pago (total o abono). Necesita jornada abierta. */
 export function DebtModal(props: { api: PosApi; client: { id: string; name: string }; onClose: () => void; onPaid?: () => void }) {
+  const { shiftId } = useActiveShift();
   const [balance, setBalance] = useState<ClientBalance | null>(null);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<PayMethod>('cash');
@@ -61,7 +63,7 @@ export function DebtModal(props: { api: PosApi; client: { id: string; name: stri
   const pay = async () => {
     try {
       setBusy(true); setError(null);
-      await props.api.rpc.payClientDebt(props.client.id, value, method);
+      await props.api.rpc.payClientDebt(props.client.id, value, method, shiftId);
       await load();
       props.onPaid?.();
     } catch (e) { setError(msg(e)); } finally { setBusy(false); }

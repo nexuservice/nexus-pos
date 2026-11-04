@@ -4,9 +4,10 @@ import type { PosApi } from '../api';
 import { useCart, usePayment, useShift } from '../hooks';
 import { CartPanel, CashModal, CustomerBar, Dropdown, PaymentModal } from '../components';
 import { useSettings } from '../settings';
+import { useActiveShift } from '../activeShift';
 import { comandaHtml, download, fmtTime, printHtml } from '../format';
 import {
-  ConsumptionModal, HoldModal, OpenShiftCard, PromosModal, ShiftCloseModal, ShiftInfoModal, ShiftSummaryModal, TicketsModal, type HoldData,
+  ConsumptionModal, HoldModal, ShiftGate, PromosModal, ShiftCloseModal, ShiftInfoModal, ShiftSummaryModal, TicketsModal, type HoldData,
 } from './PosModals';
 
 type ModalKind = null | 'cash' | 'hold' | 'consumption' | 'tickets' | 'promos' | 'shift-info' | 'shift-close';
@@ -20,9 +21,10 @@ function Clock() {
 
 export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; branchId: string | null; go: (tab: string) => void; refreshKey?: number }) {
   const { prefs } = useSettings();
-  const c = useCart(api, branchId, 'physical');
+  const { shiftId, setShiftId } = useActiveShift();
+  const c = useCart(api, branchId, 'physical', shiftId);
   const pay = usePayment(api);
-  const shift = useShift(api);
+  const shift = useShift(api, shiftId);
   const [modal, setModal] = useState<ModalKind>(null);
   const [closedShift, setClosedShift] = useState<Shift | null>(null);
   const [tickets, setTickets] = useState(0);
@@ -42,6 +44,8 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
   useEffect(() => { refreshMeta().catch(() => undefined); }, [refreshMeta, refreshKey]);
   useEffect(() => { api.rpc.branches().then((b) => setBranchName(b[0]?.name ?? '')); }, [api]);
   useEffect(() => { if (prefs.showBarcode) barcodeRef.current?.focus(); }, [prefs.showBarcode, shift.info]);
+  // La caja elegida se cerró (por ejemplo desde otro equipo): se vuelve a elegir.
+  useEffect(() => { if (shiftId && shift.info === null) setShiftId(null); }, [shiftId, shift.info, setShiftId]);
 
   const categories = useMemo(() => [...(prefs.showAll ? ['Todos'] : []), ...new Set(c.catalog.map((p) => p.category))], [c.catalog, prefs.showAll]);
   const activeCat = categories.includes(category) ? category : categories[0];
@@ -80,7 +84,9 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
   };
 
   const resume = async (t: Ticket) => {
-    const cart = await api.rpc.resumeTicket(t.id);
+    let cart = await api.rpc.resumeTicket(t.id);
+    // El pedido puede venir de otra caja o de la tienda web: se cobra en la caja en la que se retoma.
+    if (shiftId) cart = await api.rpc.assignCartShift(cart.id, shiftId);
     await c.loadCart(cart);
     setModal(null);
     await refreshMeta();
@@ -90,7 +96,7 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
   if (shift.info === null) {
     return (
       <>
-        <OpenShiftCard api={api} onOpened={refreshMeta} />
+        <ShiftGate api={api} open={shift.open} onEnter={(s) => setShiftId(s.id)} />
         {closedShift && <ShiftSummaryModal shift={closedShift} onClose={() => setClosedShift(null)} />}
       </>
     );
@@ -115,6 +121,7 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
                 <button onClick={async () => { close(); download('ventas-jornada.json', JSON.stringify(await api.rpc.listSales({ shiftId: si.shift.id }), null, 2), 'application/json'); }}>JSON de ventas</button>
                 <button onClick={() => { close(); setModal('shift-info'); }}>ℹ️ Info Jornada</button>
                 <button onClick={() => { close(); setModal('shift-close'); }}>🔒 Cerrar Jornada</button>
+                <button onClick={() => { close(); setShiftId(null); }}>🔁 Cambiar de caja</button>
               </>
             )}</Dropdown>
           </div>
@@ -224,7 +231,7 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
       {modal === 'shift-info' && <ShiftInfoModal info={si} onClose={() => setModal(null)} />}
       {modal === 'shift-close' && (
         <ShiftCloseModal api={api} info={si} onCancel={() => setModal(null)}
-          onClosed={async (s) => { setModal(null); setClosedShift(s); await c.newCart(); await refreshMeta(); }} />
+          onClosed={(s) => { setModal(null); setClosedShift(s); setShiftId(null); }} />
       )}
 
       <PaymentModal {...pay} onCancel={pay.cancel} onClose={pay.close} onNew={async () => { pay.close(); await c.newCart(); }} />

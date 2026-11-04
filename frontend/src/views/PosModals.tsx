@@ -120,9 +120,13 @@ export function SetupCard({ api, onDone }: { api: PosApi; onDone: () => void }) 
   );
 }
 
-/** Pantalla central cuando no hay jornada: elegir cajero, PIN y fondo inicial. Si el negocio es nuevo, primero lo configura. */
-export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => void }) {
+/**
+ * Abrir una caja: elegir cajero, PIN y fondo inicial. Si el negocio es nuevo, primero lo configura.
+ * `busyCashierIds`: cajeros que ya tienen una caja abierta (cada cajero tiene una sola).
+ */
+export function OpenShiftCard({ api, onOpened, busyCashierIds = [], onBack }: { api: PosApi; onOpened: (s: Shift) => void; busyCashierIds?: string[]; onBack?: () => void }) {
   const [cashiers, setCashiers] = useState<Omit<Cashier, 'pin'>[]>([]);
+  const [anyActive, setAnyActive] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [cashierId, setCashierId] = useState('');
   const [pin, setPin] = useState('');
@@ -131,19 +135,20 @@ export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => 
 
   const load = () => api.rpc.listCashiers().then((c) => {
     const active = c.filter((x) => x.active);
-    setCashiers(active);
-    setCashierId(active[0]?.id ?? '');
+    const free = active.filter((x) => !busyCashierIds.includes(x.id));
+    setAnyActive(active.length > 0);
+    setCashiers(free);
+    setCashierId(free[0]?.id ?? '');
     setLoaded(true);
   });
   useEffect(() => { load(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loaded && cashiers.length === 0) return <SetupCard api={api} onDone={load} />;
+  if (loaded && !anyActive) return <SetupCard api={api} onDone={load} />;
 
   const open = async () => {
     try {
       setError(null);
-      await api.rpc.openShift(cashierId, pin, Number(cash.replace(/\D/g, '')) || 0);
-      onOpened();
+      onOpened(await api.rpc.openShift(cashierId, pin, Number(cash.replace(/\D/g, '')) || 0));
     } catch (e) {
       setError(msg(e));
     }
@@ -152,8 +157,9 @@ export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => 
   return (
     <div className="gate">
       <div className="gate-card">
-        <h2>Abrir jornada</h2>
+        <h2>{busyCashierIds.length ? 'Abrir otra caja' : 'Abrir jornada'}</h2>
         <p className="hint">Antes de vender, abre el turno: registra quién opera la caja y el efectivo inicial.</p>
+        {loaded && cashiers.length === 0 && <p className="hint">Todos los cajeros ya tienen una caja abierta. Crea otro cajero en Administración para abrir una caja más.</p>}
         <label className="field">Cajero
           <select value={cashierId} onChange={(e) => setCashierId(e.target.value)}>
             {cashiers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -167,6 +173,53 @@ export function OpenShiftCard({ api, onOpened }: { api: PosApi; onOpened: () => 
         </label>
         <Err text={error} />
         <button className="btn primary" disabled={!cashierId || !pin} onClick={open}>Abrir jornada</button>
+        {onBack && <button className="btn ghost" onClick={onBack}>Volver a las cajas abiertas</button>}
+      </div>
+    </div>
+  );
+}
+
+/** Al entrar a la Caja: elegir en cuál de las cajas abiertas se sigue vendiendo (con el PIN de su cajero) o abrir otra. */
+export function ShiftGate({ api, open, onEnter }: { api: PosApi; open: Shift[]; onEnter: (s: Shift) => void }) {
+  const [opening, setOpening] = useState(false);
+  const [pick, setPick] = useState<string | null>(null);
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  if (open.length === 0 || opening) {
+    return <OpenShiftCard api={api} onOpened={onEnter} busyCashierIds={open.map((s) => s.cashierId)} onBack={open.length ? () => setOpening(false) : undefined} />;
+  }
+
+  const enter = async () => {
+    if (!pick) return;
+    try {
+      setError(null);
+      onEnter(await api.rpc.verifyShiftPin(pick, pin));
+    } catch (e) {
+      setError(msg(e));
+    }
+  };
+
+  return (
+    <div className="gate">
+      <div className="gate-card">
+        <h2>¿En qué caja vas a vender?</h2>
+        <p className="hint">{open.length === 1 ? 'Hay 1 caja abierta.' : `Hay ${open.length} cajas abiertas.`} Elige la tuya e ingresa el PIN de su cajero, o abre una caja nueva.</p>
+        <div style={{ display: 'grid', gap: 8 }}>
+          {open.map((s) => (
+            <button key={s.id} className={'btn ' + (pick === s.id ? 'primary' : 'ghost')} onClick={() => { setPick(s.id); setPin(''); setError(null); }}>
+              👤 {s.cashierName} · abierta {fmtTime(s.openedAt)}
+            </button>
+          ))}
+        </div>
+        {pick && (
+          <label className="field">PIN de {open.find((s) => s.id === pick)?.cashierName}
+            <input autoFocus type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && enter()} />
+          </label>
+        )}
+        <Err text={error} />
+        <button className="btn primary" disabled={!pick || !pin} onClick={enter}>Entrar a esta caja</button>
+        <button className="btn ghost" onClick={() => setOpening(true)}>➕ Abrir otra caja</button>
       </div>
     </div>
   );
@@ -199,7 +252,7 @@ export function ShiftCloseModal({ api, info, onClosed, onCancel }: { api: PosApi
     try {
       setError(null);
       const payload = Object.fromEntries(methods.map((m) => [m, num(m)]));
-      onClosed(await api.rpc.closeShift(payload, notes));
+      onClosed(await api.rpc.closeShift(payload, notes, info.shift.id));
     } catch (e) {
       setError(msg(e));
     }
