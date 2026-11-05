@@ -21,7 +21,8 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
     body: (
       <>
         <p><b>Abrir:</b> en la Caja elige el cajero, escribe su PIN y el efectivo inicial (fondo). Sin jornada abierta no se puede cobrar.</p>
-        <p><b>Cerrar:</b> menú <i>Jornada → Cerrar Jornada</i>. Cuenta el dinero por forma de pago; Nexus compara con lo esperado y muestra faltantes o sobrantes.</p>
+        <p><b>Varias cajas a la vez:</b> pueden estar abiertas 2, 3 o 4 cajas al mismo tiempo, una por cajero. Al entrar a la Caja, cada persona elige en cuál va a vender (con el PIN de su cajero) o abre una nueva con <i>Abrir otra caja</i>. Para pasar a otra caja usa <i>Jornada → Cambiar de caja</i>. Cada caja lleva sus propias ventas y su propio arqueo.</p>
+        <p><b>Cerrar:</b> menú <i>Jornada → Cerrar Jornada</i> cierra solo la caja en la que estás, sin tocar las demás. Cuenta el dinero por forma de pago; Nexus compara con lo esperado y muestra faltantes o sobrantes.</p>
         <p className="tip">💡 Efectivo esperado = fondo inicial + efectivo cobrado − vueltos entregados.</p>
       </>
     ),

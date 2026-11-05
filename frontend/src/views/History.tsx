@@ -4,6 +4,7 @@ import type { PosApi } from '../api';
 import { Modal, Receipt, printReceipt } from '../components';
 import { download, fmtDate, fmtTime, toCsv } from '../format';
 import { msg, type SaleDetail } from '../hooks';
+import { useActiveShift } from '../activeShift';
 
 type Row = Sale;
 
@@ -15,13 +16,14 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
   const [to, setTo] = useState('');
   const [detail, setDetail] = useState<SaleDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { shiftId: activeShiftId } = useActiveShift();
 
   const load = useCallback(async () => {
-    const shift = scope === 'shift' ? await api.rpc.currentShift() : null;
+    const shift = scope === 'shift' && activeShiftId ? await api.rpc.currentShift(activeShiftId) : null;
     setRows(await api.rpc.listSales({ branchId: branchId ?? undefined, from: from || undefined, to: to || undefined, shiftId: shift?.id ?? (scope === 'shift' ? 'none' : undefined), limit: 100 }));
     setConsumptions((await api.rpc.listConsumptions({ branchId: branchId ?? undefined, from: from || undefined, to: to || undefined, limit: 100 }))
       .filter((c) => scope === 'all' || (shift && c.shiftId === shift.id)));
-  }, [api, branchId, scope, from, to]);
+  }, [api, branchId, scope, from, to, activeShiftId]);
   useEffect(() => { load().catch((e) => setError(msg(e))); }, [load]);
 
   const done = rows.filter((r) => r.status === 'completed');

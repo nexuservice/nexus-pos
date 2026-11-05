@@ -137,6 +137,8 @@ export interface Cart {
   status: 'open' | 'paying' | 'closed' | 'held';
   /** Pedido de la tienda web que se cobra al retirar: lo cobra el cajero en caja (con jornada y cualquier medio), no el cliente online. */
   pickup?: boolean;
+  /** Caja (jornada) en la que se cobra. Sin valor = la única jornada abierta. */
+  shiftId?: string;
 }
 
 export type PaymentStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Cart, CatalogItem, Channel, Customer, PayMethod, ShiftInfo } from '@nexus/core';
+import type { Cart, CatalogItem, Channel, Customer, PayMethod, Shift, ShiftInfo } from '@nexus/core';
 import { PAY_METHOD_LABEL } from '@nexus/core';
 import type { PayOptions, PosApi } from './api/types';
 
 export const msg = (e: unknown) => (e instanceof Error ? e.message : 'Error inesperado');
 export type SaleDetail = Awaited<ReturnType<PosApi['rpc']['getSale']>>;
 
-export function useCart(api: PosApi, branchId: string | null, channel: Channel) {
+/** `shiftId`: la caja en la que se vende (solo la caja física lo necesita; cada caja recuerda su propio carrito abierto). */
+export function useCart(api: PosApi, branchId: string | null, channel: Channel, shiftId?: string | null) {
   const [cart, setCart] = useState<Cart | null>(null);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [orderNo, setOrderNo] = useState(1);
@@ -18,22 +19,28 @@ export function useCart(api: PosApi, branchId: string | null, channel: Channel) 
     setOrderNo(await api.rpc.nextOrderNumber());
   }, [api, branchId, channel]);
 
+  const needsShift = channel === 'physical';
   const newCart = useCallback(async () => {
-    if (!branchId) return;
-    setCart(await api.rpc.createCart(branchId, channel));
+    if (!branchId || (needsShift && !shiftId)) return;
+    setCart(await api.rpc.createCart(branchId, channel, undefined, shiftId ?? undefined));
     await refreshCatalog();
-  }, [api, branchId, channel, refreshCatalog]);
+  }, [api, branchId, channel, needsShift, shiftId, refreshCatalog]);
 
   // Al recargar la página se retoma el carrito abierto, para no dejar stock reservado sin dueño.
-  const storeKey = `nexus-cart-${channel}`;
+  const legacyKey = `nexus-cart-${channel}`;
+  const storeKey = shiftId ? `${legacyKey}-${shiftId}` : legacyKey;
   useEffect(() => {
     (async () => {
       if (!branchId) return;
+      if (needsShift && !shiftId) { setCart(null); return; }
       try {
-        const saved = localStorage.getItem(storeKey);
+        // Antes había una sola caja y un solo carrito guardado: se adopta una vez en la caja que se elija.
+        const saved = localStorage.getItem(storeKey) ?? (shiftId ? localStorage.getItem(legacyKey) : null);
         if (saved) {
-          const prev = await api.rpc.getCart(saved);
-          if (prev.status === 'open' && prev.branchId === branchId) {
+          let prev = await api.rpc.getCart(saved);
+          if (prev.status === 'open' && prev.branchId === branchId && (!prev.shiftId || prev.shiftId === shiftId)) {
+            if (shiftId && !prev.shiftId) prev = await api.rpc.assignCartShift(prev.id, shiftId);
+            if (shiftId) localStorage.removeItem(legacyKey);
             setCart(prev);
             await refreshCatalog();
             return;
@@ -44,7 +51,7 @@ export function useCart(api: PosApi, branchId: string | null, channel: Channel) 
       }
       await newCart();
     })().catch((e) => setError(msg(e)));
-  }, [api, branchId, storeKey, newCart, refreshCatalog]);
+  }, [api, branchId, storeKey, legacyKey, needsShift, shiftId, newCart, refreshCatalog]);
 
   useEffect(() => {
     try {
@@ -126,10 +133,18 @@ export function usePayment(api: PosApi) {
   return { phase, message, label, sale, start, cancel, close: () => setPhase('idle') };
 }
 
-/** Jornada abierta (null = sin jornada, undefined = cargando). */
-export function useShift(api: PosApi) {
-  const [info, setInfo] = useState<ShiftInfo | null | undefined>(undefined);
-  const refresh = useCallback(async () => setInfo(await api.rpc.shiftInfo()), [api]);
-  useEffect(() => { refresh().catch(() => setInfo(null)); }, [refresh]);
-  return { info, refresh };
+/**
+ * La caja en la que se está vendiendo (`info`: null = ninguna elegida o ya cerrada, undefined = cargando)
+ * y todas las cajas abiertas (`open`), para poder elegir o cambiar de caja.
+ */
+export function useShift(api: PosApi, shiftId: string | null) {
+  const [state, setState] = useState<{ for: string | null; info: ShiftInfo | null; open: Shift[] } | undefined>(undefined);
+  const refresh = useCallback(async () => {
+    const [info, open] = await Promise.all([shiftId ? api.rpc.shiftInfo(shiftId) : Promise.resolve(null), api.rpc.openShifts()]);
+    setState({ for: shiftId, info, open });
+  }, [api, shiftId]);
+  useEffect(() => { refresh().catch(() => setState({ for: shiftId, info: null, open: [] })); }, [refresh, shiftId]);
+  // Mientras se carga la caja recién elegida no se muestra la anterior.
+  const ready = state && state.for === shiftId;
+  return { info: ready ? state.info : undefined, open: ready ? state.open : [], refresh };
 }

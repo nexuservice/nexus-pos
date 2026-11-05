@@ -404,12 +404,11 @@ export class PosEngine {
     });
   }
 
-  /** Registra un abono (o el pago completo) a la deuda de convenio. Entra a la jornada abierta con su forma de pago. */
-  payClientDebt(clientId: string, amountClp: number, method: PayMethod): ClientBalance {
+  /** Registra un abono (o el pago completo) a la deuda de convenio. Entra a la jornada indicada (o a la única abierta) con su forma de pago. */
+  payClientDebt(clientId: string, amountClp: number, method: PayMethod, shiftId?: string | null): ClientBalance {
     if (!this.state.clients.some((c) => c.id === clientId)) throw new PosError('NOT_FOUND', 'Cliente no existe');
     if (!PAY_METHODS.includes(method) || method === 'convenio') throw new PosError('METHOD_NOT_ALLOWED', 'Elige una forma de pago distinta de convenio');
-    const shift = this.openShiftRef();
-    if (!shift) throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para registrar el pago');
+    const shift = this.resolveShift(shiftId, 'Debe haber una jornada abierta para registrar el pago');
     if (!Number.isInteger(amountClp) || amountClp <= 0) throw new PosError('INVALID_AMOUNT', 'Monto inválido');
     const debt = this.debtOf(clientId);
     if (debt === 0) throw new PosError('NOT_ALLOWED', 'El cliente no tiene deuda');
@@ -534,11 +533,13 @@ export class PosEngine {
     return clone(this.cartOf(id));
   }
 
-  createCart(branchId: string, channel: Channel, customer?: Customer | null): Cart {
+  /** `shiftId`: la caja (jornada) en la que se va a cobrar este carrito; con varias cajas abiertas cada carrito sabe de cuál es. */
+  createCart(branchId: string, channel: Channel, customer?: Customer | null, shiftId?: string | null): Cart {
     if (!this.state.branches.some((b) => b.id === branchId)) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    if (shiftId) this.resolveShift(shiftId, 'Esa caja ya está cerrada');
     const cart: Cart = {
       id: this.id('cart'), branchId, channel, customer: customer ?? {}, lines: [],
-      subtotalClp: 0, discountClp: 0, totalClp: 0, status: 'open',
+      subtotalClp: 0, discountClp: 0, totalClp: 0, status: 'open', ...(shiftId ? { shiftId } : {}),
     };
     this.state.carts[cart.id] = cart;
     return clone(cart);
@@ -614,12 +615,29 @@ export class PosEngine {
   }
 
   // ---------- jornada ----------
-  private openShiftRef(): Shift | undefined {
-    return this.state.shifts.find((s) => s.status === 'open');
+  /** Jornadas abiertas: puede haber varias cajas a la vez (una por cajero). */
+  openShifts(): Shift[] {
+    return clone(this.state.shifts.filter((s) => s.status === 'open'));
   }
 
-  currentShift(): Shift | null {
-    const s = this.openShiftRef();
+  /** La jornada abierta con ese id; sin id, la única abierta (con varias cajas abiertas no se puede adivinar cuál). */
+  private openShiftRef(shiftId?: string | null): Shift | undefined {
+    const open = this.state.shifts.filter((s) => s.status === 'open');
+    if (shiftId) return open.find((s) => s.id === shiftId);
+    return open.length === 1 ? open[0] : undefined;
+  }
+
+  /** Como openShiftRef, pero falla con un mensaje claro si no hay jornada o si hay que elegir caja. */
+  private resolveShift(shiftId: string | null | undefined, noShiftMsg: string): Shift {
+    const shift = this.openShiftRef(shiftId);
+    if (shift) return shift;
+    if (shiftId) throw new PosError('NO_SHIFT', 'Esa caja ya está cerrada');
+    if (this.state.shifts.some((s) => s.status === 'open')) throw new PosError('NO_SHIFT', 'Hay varias cajas abiertas: elige en cuál operar');
+    throw new PosError('NO_SHIFT', noShiftMsg);
+  }
+
+  currentShift(shiftId?: string | null): Shift | null {
+    const s = this.openShiftRef(shiftId);
     return s ? clone(s) : null;
   }
 
@@ -637,8 +655,8 @@ export class PosEngine {
     return expected;
   }
 
-  shiftInfo(): ShiftInfo | null {
-    const shift = this.openShiftRef();
+  shiftInfo(shiftId?: string | null): ShiftInfo | null {
+    const shift = this.openShiftRef(shiftId);
     if (!shift) return null;
     const sales = this.shiftSales(shift.id);
     return {
@@ -650,11 +668,14 @@ export class PosEngine {
     };
   }
 
+  /** Abre una caja. Puede haber varias abiertas a la vez, pero cada cajero solo una. */
   openShift(cashierId: string, pin: string, initialCashClp: number): Shift {
-    if (this.openShiftRef()) throw new PosError('SHIFT_OPEN', 'Ya hay una jornada abierta');
     const cashier = this.state.cashiers.find((c) => c.id === cashierId && c.active);
     if (!cashier) throw new PosError('NOT_FOUND', 'Cajero no existe');
     if (cashier.pin !== String(pin)) throw new PosError('BAD_PIN', 'PIN incorrecto');
+    if (this.state.shifts.some((s) => s.status === 'open' && s.cashierId === cashierId)) {
+      throw new PosError('SHIFT_OPEN', `${cashier.name} ya tiene una jornada abierta`);
+    }
     if (!Number.isInteger(initialCashClp) || initialCashClp < 0) throw new PosError('INVALID_AMOUNT', 'Efectivo inicial inválido');
     const shift: Shift = {
       id: this.id('shift'), cashierId, cashierName: cashier.name, terminal: this.terminal,
@@ -664,11 +685,27 @@ export class PosEngine {
     return clone(shift);
   }
 
+  /** Para volver a entrar a una caja ya abierta: comprueba el PIN de su cajero. No cambia nada. */
+  verifyShiftPin(shiftId: string, pin: string): Shift {
+    const shift = this.openShiftRef(shiftId);
+    if (!shift) throw new PosError('NO_SHIFT', 'Esa caja ya está cerrada');
+    const cashier = this.state.cashiers.find((c) => c.id === shift.cashierId);
+    if (!cashier || cashier.pin !== String(pin)) throw new PosError('BAD_PIN', 'PIN incorrecto');
+    return clone(shift);
+  }
+
+  /** Cambia la caja en la que se cobrará un carrito (por ejemplo al retomar un pedido guardado desde otra caja). */
+  assignCartShift(cartId: string, shiftId: string): Cart {
+    const cart = this.openCart(cartId);
+    this.resolveShift(shiftId, 'Esa caja ya está cerrada');
+    cart.shiftId = shiftId;
+    return clone(cart);
+  }
+
   /** Cierra la jornada con el monto contado por forma de pago y calcula las diferencias. */
-  closeShift(counted: Partial<Record<PayMethod, number>>, notes?: string | null): Shift {
-    const shift = this.openShiftRef();
-    if (!shift) throw new PosError('NO_SHIFT', 'No hay jornada abierta');
-    if (this.state.carts && Object.values(this.state.carts).some((c) => c.status === 'paying')) {
+  closeShift(counted: Partial<Record<PayMethod, number>>, notes?: string | null, shiftId?: string | null): Shift {
+    const shift = this.resolveShift(shiftId, 'No hay jornada abierta');
+    if (this.state.carts && Object.values(this.state.carts).some((c) => c.status === 'paying' && (!c.shiftId || c.shiftId === shift.id))) {
       throw new PosError('NOT_ALLOWED', 'Hay un cobro en curso: termínalo antes de cerrar la jornada');
     }
     const expected = this.expectedFor(shift);
@@ -708,8 +745,8 @@ export class PosEngine {
     if (cart.channel === 'online' && !cart.pickup) {
       if (!cart.customer.name || !cart.customer.email) throw new PosError('CUSTOMER_REQUIRED', 'Faltan nombre y correo del cliente');
       if (!isTerminalMethod(method)) throw new PosError('METHOD_NOT_ALLOWED', 'La tienda online solo acepta tarjeta');
-    } else if (!this.openShiftRef()) {
-      throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para cobrar');
+    } else {
+      this.resolveShift(cart.shiftId, 'Debe haber una jornada abierta para cobrar');
     }
     if (method === 'convenio') {
       // La autorización se valida en el motor con los datos actuales del cliente, no con lo que mande la pantalla.
@@ -787,7 +824,7 @@ export class PosEngine {
       });
     }
 
-    const shift = cart.channel === 'physical' ? this.openShiftRef() : undefined;
+    const shift = cart.channel === 'physical' ? this.openShiftRef(cart.shiftId) : undefined;
 
     const sale: Sale = {
       id: saleId, number: ++this.state.saleSeq, branchId: cart.branchId, channel: cart.channel, shiftId: shift?.id ?? null,
@@ -976,8 +1013,7 @@ export class PosEngine {
     const cart = this.openCart(cartId);
     if (cart.lines.length === 0) throw new PosError('EMPTY_CART', 'El carrito está vacío');
     if (cart.channel !== 'physical') throw new PosError('NOT_ALLOWED', 'El consumo solo se registra en la caja');
-    const shift = this.openShiftRef();
-    if (!shift) throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para registrar un consumo');
+    const shift = this.resolveShift(cart.shiftId, 'Debe haber una jornada abierta para registrar un consumo');
     const iso = this.now().toISOString();
     const consumptions = this.state.consumptions!;
     const id = this.id('cons');
