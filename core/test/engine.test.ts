@@ -504,7 +504,7 @@ describe('precios y valores en la tarjeta de existencia', () => {
     const buy = (over: object) => () => e.registerPurchase({ ...base, docNumber: '2', lines: [{ productId: COLA, quantity: 1, unitCostClp: 1 }], ...over });
     expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 1, priceNetClp: -5 }] })).toThrow(/precio de venta neto/);
     expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 1, priceNetClp: 10.5 }] })).toThrow(/precio de venta neto/);
-    expect(buy({ lines: [{ newProduct: { name: 'Sin precio' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/precio de venta neto del producto nuevo/);
+    expect(buy({ lines: [{ newProduct: { name: 'Sin precio' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/precio de venta del producto nuevo/);
   });
 
   it('con la inflación, cada movimiento guarda su precio, y entradas y salidas se valoran al costo', async () => {
@@ -1221,5 +1221,37 @@ describe('tope de convenio', () => {
     expect(second.status).toBe('rejected');
     expect(second.message).toMatch(/solo tiene \$10 de cupo/);
     expect(e.clientBalance('cli_seed_1').debtClp).toBe(1990);
+  });
+});
+
+describe('precios con IVA al ingresar y al comprar', () => {
+  it('el ingreso por escaneo acepta el precio de venta con IVA (exacto, sin pasar por el neto)', () => {
+    const e = make();
+    const r = e.receiveStock(B, { barcode: '7809999', name: 'Galletas', priceClp: 1990, costClp: 1000, quantity: 3 });
+    expect(r.created).toBe(true);
+    expect(r.product.priceClp).toBe(1990);
+    const again = e.receiveStock(B, { barcode: '7809999', priceClp: 2190 });
+    expect(again.product.priceClp).toBe(2190);
+  });
+
+  it('el precio con IVA manda sobre el neto si vienen los dos, y el neto sigue funcionando', () => {
+    const e = make();
+    expect(e.receiveStock(B, { barcode: '7801', name: 'A', priceClp: 1500, priceNetClp: 100 }).product.priceClp).toBe(1500);
+    expect(e.receiveStock(B, { barcode: '7802', name: 'B', priceNetClp: 1000 }).product.priceClp).toBe(1190);
+    expect(() => e.receiveStock(B, { barcode: '7803', name: 'C', priceClp: -5 })).toThrow(PosError);
+    expect(() => e.receiveStock(B, { barcode: '7804', name: 'D' })).toThrow(/precio de venta/);
+  });
+
+  it('una compra puede subir el precio de un producto existente con el valor con IVA', () => {
+    const e = make();
+    e.registerPurchase({
+      branchId: B, supplierName: 'Proveedor', docType: 'factura', docNumber: '1', docDate: '2026-03-01',
+      lines: [{ productId: COLA, quantity: 2, unitCostClp: 1000, priceClp: 2490 }],
+    });
+    expect(e.listProducts().find((p) => p.id === COLA)!.priceClp).toBe(2490);
+  });
+
+  it('el costo con IVA se convierte a neto de forma estable (ida y vuelta sin perder pesos)', () => {
+    for (const net of [1, 840, 1000, 1672, 8403, 99999]) expect(splitIva(addIva(net)).netClp).toBe(net);
   });
 });

@@ -249,6 +249,8 @@ export interface PurchaseLineInput {
   unitCostClp: number;
   /** Precio de venta neto unitario nuevo (el sistema calcula el valor con IVA). Si se omite, el precio de un producto existente no cambia. */
   priceNetClp?: number;
+  /** Precio de venta unitario nuevo CON IVA (el que ve el cliente). Si viene, manda sobre priceNetClp. */
+  priceClp?: number;
 }
 
 export interface PurchaseInput {
@@ -385,6 +387,8 @@ export interface ReceiveInput {
   costClp?: number | null;
   /** Precio de venta NETO unitario (el sistema calcula el valor con IVA). */
   priceNetClp?: number | null;
+  /** Precio de venta unitario CON IVA (el que ve el cliente). Si viene, manda sobre priceNetClp. */
+  priceClp?: number | null;
   published?: boolean;
   channel?: Channel;
 }

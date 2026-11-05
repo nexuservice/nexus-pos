@@ -9,8 +9,10 @@ interface Draft {
   existing: Product | null;
   name: string;
   category: string;
+  /** Costo unitario CON IVA (se guarda neto). */
   cost: string;
-  priceNet: string;
+  /** Precio de venta CON IVA, el que ve el cliente. */
+  price: string;
   qty: string;
   published: boolean;
 }
@@ -55,7 +57,7 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
       }
       setDraft({
         barcode, existing, name: existing?.name ?? '', category: existing?.category ?? '',
-        cost: existing ? String(existing.costClp) : '', priceNet: existing ? String(splitIva(existing.priceClp).netClp) : '',
+        cost: existing ? String(addIva(existing.costClp)) : '', price: existing ? String(existing.priceClp) : '',
         qty: '1', published: existing?.published ?? true,
       });
     } catch (e) {
@@ -68,9 +70,10 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
     try {
       setBusy(true);
       setError(null);
+      const grossCost = num(draft.cost);
       const r = await api.rpc.receiveStock(branchId, {
         barcode: draft.barcode, quantity: num(draft.qty) ?? 1, name: draft.name, category: draft.category,
-        costClp: num(draft.cost), priceNetClp: num(draft.priceNet), published: draft.published,
+        costClp: grossCost === undefined ? undefined : splitIva(grossCost).netClp, priceClp: num(draft.price), published: draft.published,
       });
       record(r.product.name, num(draft.qty) ?? 1, r.qty, r.created);
       setDraft(null);
@@ -82,7 +85,7 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
     }
   };
 
-  const netBelowCost = draft && num(draft.priceNet) !== undefined && num(draft.cost) !== undefined && num(draft.priceNet)! < num(draft.cost)!;
+  const belowCost = draft && num(draft.price) !== undefined && num(draft.cost) !== undefined && num(draft.price)! < num(draft.cost)!;
 
   return (
     <>
@@ -109,15 +112,18 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
               </label>
             )}
             <label className="field">Cantidad *<input inputMode="numeric" autoFocus={!!draft.existing} value={draft.qty} onChange={(e) => setDraft({ ...draft, qty: e.target.value })} /></label>
-            <label className="field">Costo neto unitario<input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value })} /></label>
-            <label className="field">Precio de venta neto{!draft.existing && ' *'}
-              <input inputMode="numeric" value={draft.priceNet} onChange={(e) => setDraft({ ...draft, priceNet: e.target.value })}
+            <label className="field">Costo unitario (con IVA)
+              <input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value })} />
+              {num(draft.cost) !== undefined && <small>Neto: <b>{formatClp(splitIva(num(draft.cost)!).netClp)}</b></small>}
+            </label>
+            <label className="field">Precio de venta (con IVA){!draft.existing && ' *'}
+              <input inputMode="numeric" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })}
                 onKeyDown={(e) => e.key === 'Enter' && save()} />
-              {num(draft.priceNet) !== undefined && <small>Con IVA: <b>{formatClp(addIva(num(draft.priceNet)!))}</b></small>}
+              {num(draft.price) !== undefined && <small>Neto: <b>{formatClp(splitIva(num(draft.price)!).netClp)}</b></small>}
             </label>
             {!draft.existing && <label className="check"><input type="checkbox" checked={draft.published} onChange={(e) => setDraft({ ...draft, published: e.target.checked })} /> Visible en la tienda online</label>}
           </div>
-          {netBelowCost && <div className="alert" role="alert">El precio neto queda bajo el costo: venderías con pérdida.</div>}
+          {belowCost && <div className="alert" role="alert">El precio de venta queda bajo el costo: venderías con pérdida.</div>}
           <div className="row-btns">
             <button className="btn ghost" onClick={() => { setDraft(null); setError(null); }}>Cancelar</button>
             <button className="btn primary" disabled={busy} onClick={save}>{draft.existing ? 'Agregar al inventario' : 'Crear y agregar'}</button>

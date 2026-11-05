@@ -859,6 +859,9 @@ export class PosEngine {
       if (l.priceNetClp !== undefined && (!Number.isInteger(l.priceNetClp) || l.priceNetClp < 0)) {
         throw new PosError('INVALID_AMOUNT', `Línea ${n}: el precio de venta neto debe ser un entero de 0 o más`);
       }
+      if (l.priceClp !== undefined && (!Number.isInteger(l.priceClp) || l.priceClp < 0)) {
+        throw new PosError('INVALID_AMOUNT', `Línea ${n}: el precio de venta debe ser un entero de 0 o más`);
+      }
       if (!l.productId === !l.newProduct) throw new PosError('INVALID_DATA', `Línea ${n}: elige un producto existente o crea uno nuevo`);
       if (l.productId) {
         if (!this.state.products.some((p) => p.id === l.productId)) throw new PosError('NOT_FOUND', `Línea ${n}: el producto no existe`);
@@ -866,8 +869,8 @@ export class PosEngine {
       }
       const np = l.newProduct!;
       if (!np.name?.trim()) throw new PosError('INVALID_DATA', `Línea ${n}: el producto nuevo necesita nombre`);
-      const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : np.priceClp;
-      if (newPrice === undefined) throw new PosError('INVALID_DATA', `Línea ${n}: indica el precio de venta neto del producto nuevo`);
+      const newPrice = l.priceClp ?? (l.priceNetClp !== undefined ? addIva(l.priceNetClp) : np.priceClp);
+      if (newPrice === undefined) throw new PosError('INVALID_DATA', `Línea ${n}: indica el precio de venta del producto nuevo`);
       if (!Number.isInteger(newPrice) || newPrice < 0) throw new PosError('INVALID_DATA', `Línea ${n}: el precio de venta del producto nuevo es inválido`);
       const bc = np.barcode?.trim();
       if (bc && (newBarcodes.has(bc) || this.state.products.some((p) => p.barcode === bc))) throw new PosError('INVALID_DATA', `Línea ${n}: ya existe un producto con ese código de barras`);
@@ -880,7 +883,7 @@ export class PosEngine {
     const id = this.id('purchase');
     const lines: PurchaseLine[] = [];
     for (const l of input.lines) {
-      const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : undefined;
+      const newPrice = l.priceClp ?? (l.priceNetClp !== undefined ? addIva(l.priceNetClp) : undefined);
       const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, priceClp: newPrice ?? l.newProduct!.priceClp!, costClp: l.unitCostClp }).id;
       const product = this.state.products.find((p) => p.id === productId)!;
       if (l.productId && newPrice !== undefined) this.applyPrice(product, newPrice); // el precio sube con la inflación: el nuevo rige desde esta compra
@@ -1260,7 +1263,7 @@ export class PosEngine {
 
   /**
    * Ingreso rápido por escaneo, sin proveedor ni documento (p. ej. el inventario inicial de un negocio nuevo).
-   * Si el código no existe crea el producto (nombre y precio neto obligatorios); si existe suma stock y, si se indica,
+   * Si el código no existe crea el producto (nombre y precio de venta con IVA obligatorios); si existe suma stock y, si se indica,
    * actualiza costo (promedio ponderado) y precio. Para compras con factura usar `registerPurchase`.
    */
   receiveStock(branchId: string, input: ReceiveInput): { product: Product; created: boolean; qty: number } {
@@ -1277,15 +1280,20 @@ export class PosEngine {
       throw new PosError('INVALID_AMOUNT', 'El precio neto debe ser un entero de 0 o más');
     }
     const hasCost = input.costClp !== undefined && input.costClp !== null;
-    const hasPrice = input.priceNetClp !== undefined && input.priceNetClp !== null;
+    if (input.priceClp !== undefined && input.priceClp !== null && (!Number.isInteger(input.priceClp) || input.priceClp < 0)) {
+      throw new PosError('INVALID_AMOUNT', 'El precio de venta debe ser un entero de 0 o más');
+    }
+    // El precio con IVA (el que ve el cliente) manda; el neto sigue aceptándose para quien ya lo usa.
+    const grossPrice = input.priceClp ?? (input.priceNetClp !== undefined && input.priceNetClp !== null ? addIva(input.priceNetClp) : undefined);
+    const hasPrice = grossPrice !== undefined && grossPrice !== null;
 
     let product = this.product(barcode);
     const created = !product;
     if (!product) {
       if (!input.name?.trim()) throw new PosError('INVALID_DATA', 'El producto no existe: indica su nombre para crearlo');
-      if (!hasPrice) throw new PosError('INVALID_DATA', 'El producto no existe: indica su precio de venta neto para crearlo');
+      if (!hasPrice) throw new PosError('INVALID_DATA', 'El producto no existe: indica su precio de venta para crearlo');
       const made = this.upsertProduct({
-        name: input.name, barcode, category: input.category, priceClp: addIva(input.priceNetClp!), costClp: input.costClp ?? 0,
+        name: input.name, barcode, category: input.category, priceClp: grossPrice!, costClp: input.costClp ?? 0,
         published: input.published ?? true,
       });
       product = this.state.products.find((p) => p.id === made.id)!;
@@ -1295,7 +1303,7 @@ export class PosEngine {
         const before = Math.max(0, this.totalQty(product.id));
         product.costClp = before > 0 ? Math.round((before * product.costClp + quantity * input.costClp!) / (before + quantity)) : input.costClp!;
       }
-      if (hasPrice && addIva(input.priceNetClp!) !== product.priceClp) this.recordPriceChange(product, addIva(input.priceNetClp!), 'Ingreso de inventario');
+      if (hasPrice && grossPrice! !== product.priceClp) this.recordPriceChange(product, grossPrice!, 'Ingreso de inventario');
     }
     const cell = this.cell(branchId, product.id, channel);
     cell.qty += quantity;

@@ -26,7 +26,7 @@ Las terminales nuevas parten en la carpeta de arriba: hacer `cd` a `pos-chile` p
 - Nunca guardar ni repetir claves, tokens ni la URL con token de la demo analizada. No abrir `.mcp.json` ni archivos `*token*`.
 
 ## Convenciones
-- Montos en CLP **enteros**; los precios publicados llevan IVA 19 % (`splitIva`/`addIva` en `core/src/money.ts`). Los precios de entrada de compras/ingreso se digitan **netos**.
+- Montos en CLP **enteros**; los precios publicados llevan IVA 19 % (`splitIva`/`addIva` en `core/src/money.ts`). Los costos y precios de venta de compras/ingreso por escaneo se digitan **con IVA incluido** (decisión del dueño, 2026-11); el sistema guarda el costo neto (`splitIva`) y el precio con IVA, y muestra el neto como ayuda.
 - Todo cambio de lógica lleva prueba en `core/test` o `backend/test`; cerrar con `typecheck`, `test` y `build` en verde.
 - Los tipos del servidor y del frontend salen del motor: al agregar un método público, añadirlo a `core/src/rpc.ts` (lectura o escritura) o no existirá en la API.
 - La UI no debe decir «boleta», «folio» ni «SII». «Boleta» solo existe como tipo de documento de **compra a proveedores**.
