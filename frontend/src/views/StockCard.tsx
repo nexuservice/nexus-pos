@@ -9,22 +9,21 @@ type View = Channel | 'all';
 const VIEWS: [View, string][] = [['all', 'Total'], ['physical', 'Caja'], ['online', 'Online']];
 
 /**
- * Corrige o sube el precio de venta de un producto digitando el neto. Rige desde ahora: las ventas ya hechas
- * conservan el precio al que se vendieron.
+ * Corrige o sube el precio de venta de un producto digitando el precio con IVA (el que ve el cliente). Rige desde
+ * ahora: las ventas ya hechas conservan el precio al que se vendieron.
  */
 export function PriceModal({ api, product, onClose, onSaved }: { api: PosApi; product: Product; onClose: () => void; onSaved: () => void }) {
-  const currentNet = splitIva(product.priceClp).netClp;
-  const [net, setNet] = useState(String(currentNet));
+  const [price, setPrice] = useState(String(product.priceClp));
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const value = Number(net.replace(/\D/g, '')) || 0;
-  const gross = addIva(value);
+  const value = Number(price.replace(/\D/g, '')) || 0;
+  const costWithIva = addIva(product.costClp);
 
   const save = async () => {
     try {
       setBusy(true); setError(null);
-      await api.rpc.setProductPrice(product.id, value, reason);
+      await api.rpc.setProductSalePrice(product.id, value, reason);
       onSaved();
       onClose();
     } catch (e) { setError(msg(e)); } finally { setBusy(false); }
@@ -34,22 +33,21 @@ export function PriceModal({ api, product, onClose, onSaved }: { api: PosApi; pr
     <Modal title={`✏️ Editar precio · ${product.name}`} onClose={onClose}>
       <p className="hint">Rige desde ahora. Las ventas ya hechas <b>no cambian</b>: conservan el precio al que se vendieron.</p>
       <div className="receipt">
-        <div><span>Precio actual neto</span><strong>{formatClp(currentNet)}</strong></div>
-        <div><span>Con IVA</span><span>{formatClp(product.priceClp)}</span></div>
-        <div><span>Costo unitario</span><span>{formatClp(product.costClp)}</span></div>
+        <div><span>Precio de venta actual (con IVA)</span><strong>{formatClp(product.priceClp)}</strong></div>
+        <div><span>Costo unitario (con IVA)</span><span>{formatClp(costWithIva)}</span></div>
       </div>
-      <label className="field">Nuevo precio de venta neto unitario
-        <input inputMode="numeric" autoFocus value={net} onChange={(e) => setNet(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
+      <label className="field">Nuevo precio de venta (con IVA)
+        <input inputMode="numeric" autoFocus value={price} onChange={(e) => setPrice(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
       </label>
-      <div className="receipt"><div className="big"><span>Nuevo precio con IVA</span><strong>{formatClp(gross)}</strong></div></div>
-      {value < product.costClp && <div className="alert" role="alert">El precio neto queda bajo el costo ({formatClp(product.costClp)}): venderías con pérdida.</div>}
+      <div className="receipt"><div className="big"><span>Neto del nuevo precio</span><strong>{formatClp(splitIva(value).netClp)}</strong></div></div>
+      {value < costWithIva && <div className="alert" role="alert">El precio queda bajo el costo ({formatClp(costWithIva)} con IVA): venderías con pérdida.</div>}
       <label className="field">Motivo (opcional)
         <input placeholder="Ej: error al digitar la compra" value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
       </label>
       {error && <div className="alert" role="alert">{error}</div>}
       <div className="row-btns">
         <button className="btn ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn primary" disabled={busy || gross === product.priceClp} onClick={save}>Guardar precio</button>
+        <button className="btn primary" disabled={busy || value === product.priceClp} onClick={save}>Guardar precio</button>
       </div>
     </Modal>
   );
@@ -177,8 +175,8 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
         {card && (
           <div className="stock-stats">
             <div className="stock-stat"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
-            <div className="stock-stat"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
-            <div className="stock-stat"><span>Precio neto de venta</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small></div>
+            <div className="stock-stat"><span>Costo unitario</span><strong>{formatClp(addIva(card.product.costClp))}</strong><small>con IVA · neto {formatClp(card.product.costClp)}</small></div>
+            <div className="stock-stat"><span>Precio de venta</span><strong>{formatClp(card.product.priceClp)}</strong><small>con IVA · neto {formatClp(splitIva(card.product.priceClp).netClp)}</small></div>
             <button className="btn ghost sm" onClick={() => setEditingPrice(true)}>✏️ Editar precio</button>
           </div>
         )}

@@ -222,7 +222,7 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
       <p className="hint">Mueve unidades entre caja y tienda online o ajusta el stock de la caja (positivo suma, negativo resta). «res.» = reservado en carritos y pedidos abiertos. Toca un producto para ver su tarjeta de existencia. Con «✏️ Editar» corriges el precio de venta: rige desde ahora y las ventas ya hechas no cambian.</p>
       <Err text={error} />
       <div className="table-wrap"><table>
-        <thead><tr><th>Producto</th><th>Caja</th><th>Online</th><th>Precio venta neto</th><th>Mover 5</th><th>Ajustar caja</th></tr></thead>
+        <thead><tr><th>Producto</th><th>Caja</th><th>Online</th><th>Precio de venta</th><th>Mover 5</th><th>Ajustar caja</th></tr></thead>
         <tbody>{rows.map(({ product, physical, online }) => (
           <tr key={product.id}>
             <td><button className="link-btn" title="Ver tarjeta de existencia" onClick={() => setCardFor(product)}>{product.name}</button>{!product.published && <span className="tag">solo local</span>}</td>
@@ -230,7 +230,7 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
             <td>{online.qty}{online.reserved > 0 && <small> ({online.reserved} res.)</small>}</td>
             <td>
               <span className="inline">
-                <span>{formatClp(splitIva(product.priceClp).netClp)}<small> {formatClp(product.priceClp)} c/IVA</small></span>
+                <span>{formatClp(product.priceClp)}<small> con IVA</small></span>
                 <button className="btn ghost sm" title="Editar el precio de venta" onClick={() => setPriceFor(product)}>✏️ Editar</button>
               </span>
             </td>

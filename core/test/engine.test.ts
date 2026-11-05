@@ -1337,3 +1337,17 @@ describe('precios con IVA al ingresar y al comprar', () => {
     for (const net of [1, 840, 1000, 1672, 8403, 99999]) expect(splitIva(addIva(net)).netClp).toBe(net);
   });
 });
+
+describe('corregir el precio de venta con IVA', () => {
+  it('setProductSalePrice fija el precio con IVA exacto, lo anota y no cambia ventas ya hechas', async () => {
+    const e = make();
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA);
+    await payCart(e, fast(), { cartId: c.id, method: 'cash', receivedClp: 5000 });
+    const p = e.setProductSalePrice(COLA, 2300, 'sube proveedor');
+    expect(p.priceClp).toBe(2300);
+    expect(e.listSales()[0]!.totalClp).toBe(1990);
+    expect(() => e.setProductSalePrice(COLA, 2300)).toThrow(/ya es ese/);
+    expect(() => e.setProductSalePrice(COLA, -1)).toThrow(PosError);
+    expect(() => e.setProductSalePrice('nope', 100)).toThrow(PosError);
+  });
+});

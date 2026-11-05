@@ -196,6 +196,16 @@ export class PosEngine {
     return clone(p);
   }
 
+  /** Igual que setProductPrice, pero se digita el precio de venta CON IVA (el que ve el cliente). */
+  setProductSalePrice(productId: string, priceClp: number, reason?: string | null): Product {
+    const p = this.state.products.find((x) => x.id === productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    if (!Number.isInteger(priceClp) || priceClp < 0) throw new PosError('INVALID_AMOUNT', 'El precio de venta debe ser un entero de 0 o más');
+    if (priceClp === p.priceClp) throw new PosError('NOT_ALLOWED', 'El precio ya es ese');
+    this.recordPriceChange(p, priceClp, reason);
+    return clone(p);
+  }
+
   inventory(branchId: string): InventoryRow[] {
     return this.state.products.map((product) => ({
       product: { ...product },
