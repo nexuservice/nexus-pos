@@ -5,6 +5,7 @@ import { useCart, usePayment, useShift } from '../hooks';
 import { CartPanel, CashModal, CustomerBar, Dropdown, PaymentModal } from '../components';
 import { useSettings } from '../settings';
 import { useActiveShift } from '../activeShift';
+import { CameraScanner } from '../CameraScanner';
 import { comandaHtml, download, fmtTime, printHtml } from '../format';
 import {
   ConsumptionModal, HoldModal, ShiftGate, PromosModal, ShiftCloseModal, ShiftInfoModal, ShiftSummaryModal, TicketsModal, type HoldData,
@@ -34,6 +35,7 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
   const [promoCode, setPromoCode] = useState('');
   const [category, setCategory] = useState('Todos');
   const [payOpen, setPayOpen] = useState(false);
+  const [camOpen, setCamOpen] = useState(false);
   const barcodeRef = useRef<HTMLInputElement>(null);
 
   const refreshMeta = useCallback(async () => {
@@ -134,8 +136,13 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
               <input ref={barcodeRef} className="search barcode" placeholder="Código de barras" value={code} inputMode="numeric"
                 onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && scan()} aria-label="Código de barras" />
             )}
+            {prefs.showBarcode && (
+              <button type="button" className={'btn ' + (camOpen ? 'primary' : 'ghost')} onClick={() => setCamOpen((v) => !v)}
+                aria-label={camOpen ? 'Cerrar cámara' : 'Escanear con la cámara'} title="Escanear con la cámara">📷</button>
+            )}
           </div>
         )}
+        {camOpen && <CameraScanner paused={!!payOpen || !!modal} onCode={(v) => { c.add(v); }} />}
         <div className="chips" role="tablist">
           {categories.map((cat) => (
             <button key={cat} className={'chip' + (cat === activeCat ? ' on' : '')} onClick={() => setCategory(cat)}>{cat}</button>
