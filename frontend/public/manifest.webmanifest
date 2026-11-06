@@ -1,6 +1,6 @@
 {
-  "name": "Nexus POS",
-  "short_name": "Nexus",
+  "name": "Punto Nexus",
+  "short_name": "Punto Nexus",
   "description": "Punto de venta e inventario",
   "start_url": "/",
   "scope": "/",
