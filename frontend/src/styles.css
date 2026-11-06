@@ -301,3 +301,6 @@ a.link { color: var(--muted); text-decoration: underline; font-size: 13px; text-
   .inline-form .btn, .row-btns .btn { min-height: 46px; }
   .inline-form input { font-size: 1.1rem; }
 }
+
+.cam-wrap { display: flex; flex-direction: column; gap: 8px; }
+.cam-photo { width: 100%; padding: 12px; }
