@@ -61,15 +61,19 @@ export function useCart(api: PosApi, branchId: string | null, channel: Channel, 
     }
   }, [cart, storeKey]);
 
-  const guard = async (fn: (id: string) => Promise<Cart>) => {
-    if (!cart) return;
+  /** Aplica el cambio al carrito. Devuelve si salió bien (y, si no, el motivo) para que quien lo llama pueda avisar. */
+  const guard = async (fn: (id: string) => Promise<Cart>): Promise<{ ok: boolean; message?: string }> => {
+    if (!cart) return { ok: false, message: 'No hay un pedido abierto' };
+    let result: { ok: boolean; message?: string } = { ok: true };
     try {
       setError(null);
       setCart(await fn(cart.id));
     } catch (e) {
       setError(msg(e));
+      result = { ok: false, message: msg(e) };
     }
     await refreshCatalog().catch(() => undefined);
+    return result;
   };
 
   return {

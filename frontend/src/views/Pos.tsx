@@ -142,7 +142,12 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
             )}
           </div>
         )}
-        {camOpen && <CameraScanner paused={!!payOpen || !!modal} onCode={(v) => { c.add(v); }} />}
+        {camOpen && <CameraScanner paused={!!payOpen || !!modal} onCode={async (v) => {
+          const r = await c.add(v);
+          if (!r.ok) return { ok: false, message: r.message };
+          const p = await api.rpc.findProduct(v).catch(() => null);
+          return { ok: true, message: p ? `${p.name} agregado` : 'Agregado' };
+        }} />}
         <div className="chips" role="tablist">
           {categories.map((cat) => (
             <button key={cat} className={'chip' + (cat === activeCat ? ' on' : '')} onClick={() => setCategory(cat)}>{cat}</button>

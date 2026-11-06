@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { beepError, beepOk, setSoundEnabled, soundEnabled, unlockAudio } from './sound';
 
 /** ¿El dígito verificador de un EAN-8 / UPC-A / EAN-13 es correcto? Otros largos (p. ej. Code 128) no se validan. */
 export function validBarcode(code: string): boolean {
@@ -27,15 +28,40 @@ async function makeReader() {
  * Para evitar lecturas falsas: solo EAN/UPC/Code128, se verifica el dígito verificador y el mismo código debe leerse
  * dos veces seguidas. Si la lectura en vivo no resulta, "Tomar foto" lee una foto en alta calidad de la cámara.
  */
-export function CameraScanner({ onCode, paused }: { onCode: (code: string) => void; paused?: boolean }) {
+/** Lo que responde quien recibe el código: ok=false si no se pudo agregar (suena el aviso de error). Sin respuesta cuenta como ok. */
+export type ScanResult = void | { ok: boolean; message?: string };
+
+export function CameraScanner({ onCode, paused }: { onCode: (code: string) => ScanResult | Promise<ScanResult>; paused?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const onCodeRef = useRef(onCode);
   const pausedRef = useRef(!!paused);
+  const handleCodeRef = useRef<(code: string) => Promise<void>>(async () => undefined);
   onCodeRef.current = onCode;
   pausedRef.current = !!paused;
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sound, setSound] = useState(soundEnabled());
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  /** Entrega el código y, según el resultado: pitido, vibración y aviso visible (verde o rojo) sobre la cámara. */
+  const handleCode = async (code: string) => {
+    let result: ScanResult;
+    try { result = await onCodeRef.current(code); } catch (e) { result = { ok: false, message: (e as Error)?.message }; }
+    const ok = !result || result.ok;
+    if (ok) beepOk(); else beepError();
+    try { navigator.vibrate?.(ok ? 60 : [80, 60, 80]); } catch { /* sin vibración */ }
+    clearTimeout(flashTimer.current);
+    setFlash({ ok, text: (result && result.message) || (ok ? `Leído ${code}` : 'No se pudo agregar') });
+    flashTimer.current = setTimeout(() => setFlash(null), ok ? 1500 : 2800);
+  };
+  handleCodeRef.current = handleCode;
+
+  useEffect(() => {
+    unlockAudio();
+    return () => clearTimeout(flashTimer.current);
+  }, []);
 
   useEffect(() => {
     let dead = false;
@@ -59,8 +85,7 @@ export function CameraScanner({ onCode, paused }: { onCode: (code: string) => vo
             accepted = { code, at: now };
             pending = { code: '', at: 0 };
             setNote(null);
-            try { navigator.vibrate?.(60); } catch { /* sin vibración */ }
-            onCodeRef.current(code);
+            void handleCodeRef.current(code);
           },
         );
         if (dead) { controls.stop(); return; }
@@ -88,7 +113,7 @@ export function CameraScanner({ onCode, paused }: { onCode: (code: string) => vo
       const code = result.getText().trim();
       if (!validBarcode(code)) throw new Error('lectura inválida');
       setNote(null);
-      onCodeRef.current(code);
+      await handleCode(code);
     } catch {
       setNote('No se pudo leer el código en la foto. Acércate, que se vea completo y nítido, y vuelve a intentar (o escríbelo abajo).');
     } finally {
@@ -103,10 +128,15 @@ export function CameraScanner({ onCode, paused }: { onCode: (code: string) => vo
         <div className="cam-box">
           <video ref={videoRef} className="cam-video" muted playsInline />
           <div className="cam-guide" aria-hidden="true" />
+          {flash && <div className={'cam-flash ' + (flash.ok ? 'ok' : 'bad')} role="status" aria-live="polite">{flash.ok ? '✓' : '✕'} {flash.text}</div>}
         </div>
       )}
       <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => fromPhoto(e.target.files?.[0])} />
-      <button type="button" className="btn ghost cam-photo" onClick={() => fileRef.current?.click()}>📸 Tomar foto del código</button>
+      <div className="cam-actions">
+        <button type="button" className="btn ghost cam-photo" onClick={() => fileRef.current?.click()}>📸 Tomar foto del código</button>
+        <button type="button" className="btn ghost cam-sound" aria-pressed={sound} title={sound ? 'Silenciar el pitido' : 'Activar el pitido'}
+          onClick={() => { const on = !sound; setSound(on); setSoundEnabled(on); if (on) { unlockAudio(); beepOk(); } }}>{sound ? '🔊 Pitido' : '🔇 Silencio'}</button>
+      </div>
       {note && <p className="hint">{note}</p>}
       <p className="hint">Mantén el código dentro del recuadro, quieto y bien iluminado. Verifica que el número que aparece sea el del producto.</p>
     </div>

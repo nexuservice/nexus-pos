@@ -304,3 +304,7 @@ a.link { color: var(--muted); text-decoration: underline; font-size: 13px; text-
 
 .cam-wrap { display: flex; flex-direction: column; gap: 8px; }
 .cam-photo { width: 100%; padding: 12px; }
+.cam-actions { display: flex; gap: 8px; } .cam-actions .cam-photo { flex: 1; } .cam-sound { padding: 12px; white-space: nowrap; }
+.cam-flash { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 10px 12px; border-radius: 10px; font-weight: 700; text-align: center; color: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .4); animation: cam-pop .15s ease-out; }
+.cam-flash.ok { background: #16a34a; } .cam-flash.bad { background: #dc2626; }
+@keyframes cam-pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
