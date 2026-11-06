@@ -173,6 +173,8 @@ ul.plain { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13px; color
 .field input, .field select, .field textarea, .checkout input, .inline input, .filters input[type=date], .head-actions + input, .page-head input {
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); font-weight: 400;
 }
+.inline select { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
+.inline select option { background: var(--bg); color: inherit; }
 .field small { font-weight: 400; color: var(--muted); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -274,4 +276,28 @@ div.ok { background: var(--ok); } div.bad { background: var(--bad); }
   nav { margin-left: 0; width: 100%; } .brand small { display: none; }
   .two-col, .radio-cards { grid-template-columns: 1fr; }
   .hbar { grid-template-columns: 90px 1fr auto; }
+}
+
+/* ---------- acceso, configuración inicial e ingreso por escaneo ---------- */
+.login-brand { justify-content: center; font-size: 26px; margin-bottom: 4px; }
+.gate-card.wide { width: min(640px, 100%); }
+.gate-card h4 { margin-top: 4px; }
+.empty-state { background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); padding: 24px; text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.empty-state h3 { margin: 0; }
+.empty-state p { margin: 0; color: var(--muted); max-width: 46ch; }
+.scan-bar { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.scan-bar .search { font-size: 1.15rem; padding: 14px 16px; border: 2px solid var(--brand); }
+.section-title { margin: 20px 0 8px; font-size: 1rem; }
+.created { border-color: var(--ok); }
+.created code { font-size: 1.05rem; user-select: all; }
+a.link { color: var(--muted); text-decoration: underline; font-size: 13px; text-align: center; }
+
+/* Escáner con cámara (ingreso de inventario desde el celular) */
+.cam-btn { width: 100%; padding: 14px; font-size: 1.05rem; }
+.cam-box { position: relative; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; background: #000; border-radius: var(--radius); overflow: hidden; }
+.cam-video { width: 100%; height: 100%; object-fit: cover; }
+.cam-guide { position: absolute; left: 10%; right: 10%; top: 35%; bottom: 35%; border: 2px solid rgba(255, 255, 255, .85); border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; }
+@media (max-width: 600px) {
+  .inline-form .btn, .row-btns .btn { min-height: 46px; }
+  .inline-form input { font-size: 1.1rem; }
 }

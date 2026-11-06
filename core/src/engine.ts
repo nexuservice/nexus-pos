@@ -1,17 +1,16 @@
 import type {
-  AppliedPromo, Branch, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, Emisor, EngineState,
+  AppliedPromo, Branch, Business, Cart, CartLine, CatalogItem, Cashier, Channel, Client, ClientBalance, ClientWithDebt, Consumption, CreditPayment, Customer, EngineState,
   InventoryRow, PayMethod, Payment, PaymentEvent, Product, Promotion, Provider, Sale, SalesFilter, SalesReport,
-  PriceChange, Purchase, PurchaseInput, PurchaseLine, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, TaxDocument, Ticket, TicketChannel,
+  PriceChange, Purchase, PurchaseInput, PurchaseLine, ReceiveInput, Shift, ShiftInfo, StockCard, StockCardRow, StockCell, StockMovement, Ticket, TicketChannel,
 } from './types';
 import { PAY_METHODS, PURCHASE_DOC_LABEL, PURCHASE_DOC_TYPES, isTerminalMethod } from './types';
 import { addIva, formatClp, splitIva } from './money';
 import { isValidRut, normalizeRut } from './rut';
-import { buildBoletaXml } from './billing';
 import { buildSalesReport, santiagoDay } from './reports';
 
 export type ErrorCode =
   | 'NOT_FOUND' | 'INVALID_QTY' | 'OUT_OF_STOCK' | 'CART_NOT_OPEN' | 'EMPTY_CART' | 'INVALID_RUT'
-  | 'CUSTOMER_REQUIRED' | 'METHOD_NOT_ALLOWED' | 'NO_FOLIOS' | 'INSUFFICIENT_STOCK' | 'NO_SHIFT' | 'SHIFT_OPEN'
+  | 'CUSTOMER_REQUIRED' | 'METHOD_NOT_ALLOWED' | 'INSUFFICIENT_STOCK' | 'NO_SHIFT' | 'SHIFT_OPEN'
   | 'BAD_PIN' | 'INVALID_AMOUNT' | 'PROMO_INVALID' | 'INVALID_DATA' | 'NOT_ALLOWED';
 
 export class PosError extends Error {
@@ -23,19 +22,25 @@ export class PosError extends Error {
 
 export interface EngineOptions {
   now?: () => Date;
-  emisor?: Emisor;
   terminal?: string;
 }
 
-export const DEFAULT_EMISOR: Emisor = {
-  rut: '11111111-1',
-  razonSocial: 'Nexus Demo SpA',
-  giro: 'Comercio al por menor',
-  direccion: 'Av. Providencia 1234',
-  comuna: 'Providencia',
-};
+/** Un pedido web sin pagar libera su stock a las 24 horas; hay tope de pedidos pendientes y de tamaño para frenar abusos. */
+export const WEB_ORDER_TTL_HOURS = 24;
+const WEB_ORDER_MAX_PENDING = 100;
+const WEB_ORDER_MAX_LINES = 30;
+const WEB_ORDER_MAX_QTY = 50;
 
-type Listener = (e: PaymentEvent) => void;
+export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number }
+export interface WebOrderInput {
+  items: { productId: string; quantity: number }[];
+  customerName: string;
+  phone: string;
+  email?: string;
+  note?: string;
+}
+
+type Listener =(e: PaymentEvent) => void;
 const clone = <T>(v: T): T => structuredClone(v);
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -46,7 +51,6 @@ const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 export class PosEngine {
   private state: EngineState;
   private readonly now: () => Date;
-  private readonly emisor: Emisor;
   private readonly terminal: string;
   private readonly eventLog = new Map<string, PaymentEvent[]>();
   private readonly listeners = new Map<string, Set<Listener>>();
@@ -57,8 +61,8 @@ export class PosEngine {
     this.state.consumptions ??= [];
     this.state.purchases ??= [];
     this.state.priceChanges ??= [];
+    this.state.business ??= { name: 'Mi negocio' };
     this.now = opts.now ?? (() => new Date());
-    this.emisor = opts.emisor ?? DEFAULT_EMISOR;
     this.terminal = opts.terminal ?? 'CAJA1';
   }
 
@@ -192,6 +196,16 @@ export class PosEngine {
     return clone(p);
   }
 
+  /** Igual que setProductPrice, pero se digita el precio de venta CON IVA (el que ve el cliente). */
+  setProductSalePrice(productId: string, priceClp: number, reason?: string | null): Product {
+    const p = this.state.products.find((x) => x.id === productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    if (!Number.isInteger(priceClp) || priceClp < 0) throw new PosError('INVALID_AMOUNT', 'El precio de venta debe ser un entero de 0 o más');
+    if (priceClp === p.priceClp) throw new PosError('NOT_ALLOWED', 'El precio ya es ese');
+    this.recordPriceChange(p, priceClp, reason);
+    return clone(p);
+  }
+
   inventory(branchId: string): InventoryRow[] {
     return this.state.products.map((product) => ({
       product: { ...product },
@@ -254,15 +268,14 @@ export class PosEngine {
       const cons = (this.state.consumptions ?? []).find((c) => c.id === m.refId);
       const buy = (this.state.purchases ?? []).find((x) => x.id === m.refId);
       const doc = buy ? `${PURCHASE_DOC_LABEL[buy.docType]} N° ${buy.docNumber}` : '';
-      // La boleta se nombra por su folio; sin folio (se acabaron) queda el número de venta.
-      const folio = sale ? this.state.documents.find((d) => d.id === sale.documentId)?.folio : undefined;
-      const saleKind = folio ? 'Boleta' : 'Venta';
-      const saleNum = folio ?? sale?.number;
+      // Nexus no emite boletas: la venta se nombra por su número de pedido.
+      const saleNum = sale?.number;
       switch (m.reason) {
         case 'purchase': return buy ? `Compra · ${doc} · ${buy.supplierName}` : 'Compra';
-        case 'sale': return sale ? `${saleKind} N° ${saleNum}` : 'Venta';
+        case 'initial': return 'Ingreso de inventario';
+        case 'sale': return sale ? `Venta N° ${saleNum}` : 'Venta';
         case 'consumption': return cons ? `Consumo N° ${cons.number}${cons.note ? ` · ${cons.note}` : ''}` : 'Consumo';
-        case 'return': return sale ? `Anulación de ${saleKind.toLowerCase()} N° ${saleNum}` : cons ? `Anulación de consumo N° ${cons.number}` : buy ? `Anulación de compra · ${doc}` : 'Devolución';
+        case 'return': return sale ? `Anulación de venta N° ${saleNum}` : cons ? `Anulación de consumo N° ${cons.number}` : buy ? `Anulación de compra · ${doc}` : 'Devolución';
         case 'transfer': return m.delta < 0 ? `Traspaso a ${label[m.channel === 'physical' ? 'online' : 'physical']}` : `Traspaso desde ${label[m.channel === 'physical' ? 'online' : 'physical']}`;
         default: return 'Ajuste de inventario';
       }
@@ -338,7 +351,7 @@ export class PosEngine {
 
   // ---------- clientes, cajeros ----------
   listClients(): ClientWithDebt[] {
-    return clone(this.state.clients.map((c) => ({ ...c, debtClp: this.debtOf(c.id) })));
+    return clone(this.state.clients.map((c) => ({ ...c, debtClp: this.debtOf(c.id), availableCreditClp: this.creditAvailable(c) })));
   }
 
   /** Búsqueda por nombre o RUT (mínimo 2 caracteres, sin tildes ni puntos). Incluye lo que cada cliente debe. */
@@ -349,7 +362,7 @@ export class PosEngine {
       this.state.clients
         .filter((c) => norm(c.name).replace(/\s/g, '').includes(term) || (c.rut ?? '').replace(/[.\-]/g, '').toLowerCase().includes(term.replace(/-/g, '')))
         .slice(0, 8)
-        .map((c) => ({ ...c, debtClp: this.debtOf(c.id) })),
+        .map((c) => ({ ...c, debtClp: this.debtOf(c.id), availableCreditClp: this.creditAvailable(c) })),
     );
   }
 
@@ -364,6 +377,21 @@ export class PosEngine {
     return Math.max(0, sold - paid);
   }
 
+  /** Cupo que le queda al cliente: su tope menos lo que debe (nunca negativo). null si no tiene tope. */
+  private creditAvailable(client: Client): number | null {
+    if (client.creditLimitClp === undefined || client.creditLimitClp === null) return null;
+    return Math.max(0, client.creditLimitClp - this.debtOf(client.id));
+  }
+
+  /** Mensaje de error si la venta a convenio no cabe en el cupo del cliente; null si cabe o no hay tope. */
+  private creditShortfall(client: Client, totalClp: number): string | null {
+    const available = this.creditAvailable(client);
+    if (available === null || totalClp <= available) return null;
+    return available === 0
+      ? `${client.name} no tiene cupo de convenio disponible`
+      : `${client.name} solo tiene ${formatClp(available)} de cupo y esta venta es de ${formatClp(totalClp)}`;
+  }
+
   /** Lo que el cliente debe en total por ventas a convenio, con el detalle de ventas y abonos. */
   clientBalance(clientId: string): ClientBalance {
     const client = this.state.clients.find((c) => c.id === clientId);
@@ -375,6 +403,8 @@ export class PosEngine {
       clientName: client.name,
       clientRut: client.rut,
       debtClp: this.debtOf(clientId),
+      creditLimitClp: client.creditLimitClp,
+      availableCreditClp: this.creditAvailable(client),
       creditSalesClp: sales.reduce((n, s) => n + s.totalClp, 0),
       paidClp: payments.reduce((n, p) => n + p.amountClp, 0),
       sales: sales.map((s) => ({
@@ -384,12 +414,11 @@ export class PosEngine {
     });
   }
 
-  /** Registra un abono (o el pago completo) a la deuda de convenio. Entra a la jornada abierta con su forma de pago. */
-  payClientDebt(clientId: string, amountClp: number, method: PayMethod): ClientBalance {
+  /** Registra un abono (o el pago completo) a la deuda de convenio. Entra a la jornada indicada (o a la única abierta) con su forma de pago. */
+  payClientDebt(clientId: string, amountClp: number, method: PayMethod, shiftId?: string | null): ClientBalance {
     if (!this.state.clients.some((c) => c.id === clientId)) throw new PosError('NOT_FOUND', 'Cliente no existe');
     if (!PAY_METHODS.includes(method) || method === 'convenio') throw new PosError('METHOD_NOT_ALLOWED', 'Elige una forma de pago distinta de convenio');
-    const shift = this.openShiftRef();
-    if (!shift) throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para registrar el pago');
+    const shift = this.resolveShift(shiftId, 'Debe haber una jornada abierta para registrar el pago');
     if (!Number.isInteger(amountClp) || amountClp <= 0) throw new PosError('INVALID_AMOUNT', 'Monto inválido');
     const debt = this.debtOf(clientId);
     if (debt === 0) throw new PosError('NOT_ALLOWED', 'El cliente no tiene deuda');
@@ -401,7 +430,7 @@ export class PosEngine {
     return this.clientBalance(clientId);
   }
 
-  upsertClient(input: Partial<Client> & { name: string }): Client {
+  upsertClient(input: Partial<Omit<Client, 'creditLimitClp'>> & { name: string; creditLimitClp?: number | null }): Client {
     const name = input.name?.trim();
     if (!name) throw new PosError('INVALID_DATA', 'El nombre es obligatorio');
     let rut = input.rut?.trim() || undefined;
@@ -412,12 +441,20 @@ export class PosEngine {
     const existing = input.id ? this.state.clients.find((c) => c.id === input.id) : undefined;
     if (rut && this.state.clients.some((c) => c.rut === rut && c.id !== existing?.id)) throw new PosError('INVALID_DATA', 'Ya existe un cliente con ese RUT');
     const creditAuthorized = !!input.creditAuthorized;
+    // Sin la clave `creditLimitClp` en la entrada se conserva el tope actual; null o vacío lo quita.
+    let creditLimitClp = existing?.creditLimitClp;
+    if ('creditLimitClp' in input) {
+      const raw = input.creditLimitClp;
+      if (raw === null || raw === undefined) creditLimitClp = undefined;
+      else if (!Number.isInteger(raw) || raw < 0 || raw > 1_000_000_000) throw new PosError('INVALID_DATA', 'El tope de convenio debe ser un monto entero en pesos, de 0 en adelante');
+      else creditLimitClp = raw;
+    }
     if (creditAuthorized && !rut) throw new PosError('INVALID_DATA', 'Para autorizar convenio el cliente necesita RUT');
     if (existing) {
-      Object.assign(existing, { name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized });
+      Object.assign(existing, { name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized, creditLimitClp });
       return clone(existing);
     }
-    const c: Client = { id: this.id('cli'), name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized };
+    const c: Client = { id: this.id('cli'), name, rut, email: input.email?.trim() || undefined, phone: input.phone?.trim() || undefined, isVip: !!input.isVip, creditAuthorized, ...(creditLimitClp !== undefined ? { creditLimitClp } : {}) };
     this.state.clients.push(c);
     return clone(c);
   }
@@ -506,11 +543,13 @@ export class PosEngine {
     return clone(this.cartOf(id));
   }
 
-  createCart(branchId: string, channel: Channel, customer?: Customer | null): Cart {
+  /** `shiftId`: la caja (jornada) en la que se va a cobrar este carrito; con varias cajas abiertas cada carrito sabe de cuál es. */
+  createCart(branchId: string, channel: Channel, customer?: Customer | null, shiftId?: string | null): Cart {
     if (!this.state.branches.some((b) => b.id === branchId)) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    if (shiftId) this.resolveShift(shiftId, 'Esa caja ya está cerrada');
     const cart: Cart = {
       id: this.id('cart'), branchId, channel, customer: customer ?? {}, lines: [],
-      subtotalClp: 0, discountClp: 0, totalClp: 0, status: 'open',
+      subtotalClp: 0, discountClp: 0, totalClp: 0, status: 'open', ...(shiftId ? { shiftId } : {}),
     };
     this.state.carts[cart.id] = cart;
     return clone(cart);
@@ -586,12 +625,29 @@ export class PosEngine {
   }
 
   // ---------- jornada ----------
-  private openShiftRef(): Shift | undefined {
-    return this.state.shifts.find((s) => s.status === 'open');
+  /** Jornadas abiertas: puede haber varias cajas a la vez (una por cajero). */
+  openShifts(): Shift[] {
+    return clone(this.state.shifts.filter((s) => s.status === 'open'));
   }
 
-  currentShift(): Shift | null {
-    const s = this.openShiftRef();
+  /** La jornada abierta con ese id; sin id, la única abierta (con varias cajas abiertas no se puede adivinar cuál). */
+  private openShiftRef(shiftId?: string | null): Shift | undefined {
+    const open = this.state.shifts.filter((s) => s.status === 'open');
+    if (shiftId) return open.find((s) => s.id === shiftId);
+    return open.length === 1 ? open[0] : undefined;
+  }
+
+  /** Como openShiftRef, pero falla con un mensaje claro si no hay jornada o si hay que elegir caja. */
+  private resolveShift(shiftId: string | null | undefined, noShiftMsg: string): Shift {
+    const shift = this.openShiftRef(shiftId);
+    if (shift) return shift;
+    if (shiftId) throw new PosError('NO_SHIFT', 'Esa caja ya está cerrada');
+    if (this.state.shifts.some((s) => s.status === 'open')) throw new PosError('NO_SHIFT', 'Hay varias cajas abiertas: elige en cuál operar');
+    throw new PosError('NO_SHIFT', noShiftMsg);
+  }
+
+  currentShift(shiftId?: string | null): Shift | null {
+    const s = this.openShiftRef(shiftId);
     return s ? clone(s) : null;
   }
 
@@ -609,8 +665,8 @@ export class PosEngine {
     return expected;
   }
 
-  shiftInfo(): ShiftInfo | null {
-    const shift = this.openShiftRef();
+  shiftInfo(shiftId?: string | null): ShiftInfo | null {
+    const shift = this.openShiftRef(shiftId);
     if (!shift) return null;
     const sales = this.shiftSales(shift.id);
     return {
@@ -622,11 +678,14 @@ export class PosEngine {
     };
   }
 
+  /** Abre una caja. Puede haber varias abiertas a la vez, pero cada cajero solo una. */
   openShift(cashierId: string, pin: string, initialCashClp: number): Shift {
-    if (this.openShiftRef()) throw new PosError('SHIFT_OPEN', 'Ya hay una jornada abierta');
     const cashier = this.state.cashiers.find((c) => c.id === cashierId && c.active);
     if (!cashier) throw new PosError('NOT_FOUND', 'Cajero no existe');
     if (cashier.pin !== String(pin)) throw new PosError('BAD_PIN', 'PIN incorrecto');
+    if (this.state.shifts.some((s) => s.status === 'open' && s.cashierId === cashierId)) {
+      throw new PosError('SHIFT_OPEN', `${cashier.name} ya tiene una jornada abierta`);
+    }
     if (!Number.isInteger(initialCashClp) || initialCashClp < 0) throw new PosError('INVALID_AMOUNT', 'Efectivo inicial inválido');
     const shift: Shift = {
       id: this.id('shift'), cashierId, cashierName: cashier.name, terminal: this.terminal,
@@ -636,11 +695,27 @@ export class PosEngine {
     return clone(shift);
   }
 
+  /** Para volver a entrar a una caja ya abierta: comprueba el PIN de su cajero. No cambia nada. */
+  verifyShiftPin(shiftId: string, pin: string): Shift {
+    const shift = this.openShiftRef(shiftId);
+    if (!shift) throw new PosError('NO_SHIFT', 'Esa caja ya está cerrada');
+    const cashier = this.state.cashiers.find((c) => c.id === shift.cashierId);
+    if (!cashier || cashier.pin !== String(pin)) throw new PosError('BAD_PIN', 'PIN incorrecto');
+    return clone(shift);
+  }
+
+  /** Cambia la caja en la que se cobrará un carrito (por ejemplo al retomar un pedido guardado desde otra caja). */
+  assignCartShift(cartId: string, shiftId: string): Cart {
+    const cart = this.openCart(cartId);
+    this.resolveShift(shiftId, 'Esa caja ya está cerrada');
+    cart.shiftId = shiftId;
+    return clone(cart);
+  }
+
   /** Cierra la jornada con el monto contado por forma de pago y calcula las diferencias. */
-  closeShift(counted: Partial<Record<PayMethod, number>>, notes?: string | null): Shift {
-    const shift = this.openShiftRef();
-    if (!shift) throw new PosError('NO_SHIFT', 'No hay jornada abierta');
-    if (this.state.carts && Object.values(this.state.carts).some((c) => c.status === 'paying')) {
+  closeShift(counted: Partial<Record<PayMethod, number>>, notes?: string | null, shiftId?: string | null): Shift {
+    const shift = this.resolveShift(shiftId, 'No hay jornada abierta');
+    if (this.state.carts && Object.values(this.state.carts).some((c) => c.status === 'paying' && (!c.shiftId || c.shiftId === shift.id))) {
       throw new PosError('NOT_ALLOWED', 'Hay un cobro en curso: termínalo antes de cerrar la jornada');
     }
     const expected = this.expectedFor(shift);
@@ -677,20 +752,20 @@ export class PosEngine {
     if (!PAY_METHODS.includes(method)) throw new PosError('METHOD_NOT_ALLOWED', 'Medio de pago no válido');
     const cart = this.openCart(cartId);
     if (cart.lines.length === 0) throw new PosError('EMPTY_CART', 'El carrito está vacío');
-    if (cart.channel === 'online') {
+    if (cart.channel === 'online' && !cart.pickup) {
       if (!cart.customer.name || !cart.customer.email) throw new PosError('CUSTOMER_REQUIRED', 'Faltan nombre y correo del cliente');
       if (!isTerminalMethod(method)) throw new PosError('METHOD_NOT_ALLOWED', 'La tienda online solo acepta tarjeta');
-    } else if (!this.openShiftRef()) {
-      throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para cobrar');
+    } else {
+      this.resolveShift(cart.shiftId, 'Debe haber una jornada abierta para cobrar');
     }
     if (method === 'convenio') {
       // La autorización se valida en el motor con los datos actuales del cliente, no con lo que mande la pantalla.
       const client = cart.customer.clientId ? this.state.clients.find((c) => c.id === cart.customer.clientId) : undefined;
       if (!client || !client.name || !client.rut) throw new PosError('CUSTOMER_REQUIRED', 'El convenio requiere un cliente registrado con nombre y RUT');
       if (!client.creditAuthorized) throw new PosError('METHOD_NOT_ALLOWED', `${client.name} no está autorizado para pagar con convenio`);
+      const short = this.creditShortfall(client, cart.totalClp);
+      if (short) throw new PosError('METHOD_NOT_ALLOWED', short);
     }
-    if (this.foliosRemaining() === 0) throw new PosError('NO_FOLIOS', 'No quedan folios de boleta disponibles');
-
     let received: number | undefined;
     let change: number | undefined;
     if (method === 'cash') {
@@ -732,6 +807,19 @@ export class PosEngine {
       return clone(payment);
     }
 
+    // Otro cobro a convenio del mismo cliente pudo usar el cupo mientras este esperaba: se vuelve a revisar al cerrar.
+    if (payment.method === 'convenio') {
+      const client = cart.customer.clientId ? this.state.clients.find((c) => c.id === cart.customer.clientId) : undefined;
+      const short = client ? this.creditShortfall(client, cart.totalClp) : null;
+      if (short) {
+        payment.status = 'rejected';
+        payment.message = short;
+        cart.status = 'open';
+        this.emit(paymentId, 'rejected', short);
+        return clone(payment);
+      }
+    }
+
     const iso = this.now().toISOString();
     const saleId = this.id('sale');
     const { netClp, ivaClp } = splitIva(cart.totalClp);
@@ -746,27 +834,14 @@ export class PosEngine {
       });
     }
 
-    const shift = cart.channel === 'physical' ? this.openShiftRef() : undefined;
-    let documentId: string | null = null;
-    if (this.state.nextFolio <= this.state.lastFolio) {
-      const folio = this.state.nextFolio++;
-      const doc: TaxDocument = {
-        id: this.id('doc'), saleId, dteType: 39, folio, siiStatus: 'draft', issuedAt: iso,
-        xml: buildBoletaXml({
-          folio, date: santiagoDay(iso), emisor: this.emisor, receptor: cart.customer, lines,
-          discountClp: cart.discountClp, totalClp: cart.totalClp,
-        }),
-      };
-      this.state.documents.push(doc);
-      documentId = doc.id;
-    }
+    const shift = cart.channel === 'physical' ? this.openShiftRef(cart.shiftId) : undefined;
 
     const sale: Sale = {
       id: saleId, number: ++this.state.saleSeq, branchId: cart.branchId, channel: cart.channel, shiftId: shift?.id ?? null,
       cashierName: shift?.cashierName, customer: clone(cart.customer), lines, subtotalClp: cart.subtotalClp,
       discountClp: cart.discountClp, promotionCode: cart.promotion?.code, totalClp: cart.totalClp, netClp, ivaClp,
       method: payment.method, provider: payment.provider, authCode: outcome.authCode, receivedClp: payment.receivedClp,
-      changeClp: payment.changeClp, status: 'completed', createdAt: iso, paidAt: iso, documentId,
+      changeClp: payment.changeClp, status: 'completed', createdAt: iso, paidAt: iso,
     };
     this.state.sales.push(sale);
     payment.status = 'approved';
@@ -831,6 +906,9 @@ export class PosEngine {
       if (l.priceNetClp !== undefined && (!Number.isInteger(l.priceNetClp) || l.priceNetClp < 0)) {
         throw new PosError('INVALID_AMOUNT', `Línea ${n}: el precio de venta neto debe ser un entero de 0 o más`);
       }
+      if (l.priceClp !== undefined && (!Number.isInteger(l.priceClp) || l.priceClp < 0)) {
+        throw new PosError('INVALID_AMOUNT', `Línea ${n}: el precio de venta debe ser un entero de 0 o más`);
+      }
       if (!l.productId === !l.newProduct) throw new PosError('INVALID_DATA', `Línea ${n}: elige un producto existente o crea uno nuevo`);
       if (l.productId) {
         if (!this.state.products.some((p) => p.id === l.productId)) throw new PosError('NOT_FOUND', `Línea ${n}: el producto no existe`);
@@ -838,8 +916,8 @@ export class PosEngine {
       }
       const np = l.newProduct!;
       if (!np.name?.trim()) throw new PosError('INVALID_DATA', `Línea ${n}: el producto nuevo necesita nombre`);
-      const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : np.priceClp;
-      if (newPrice === undefined) throw new PosError('INVALID_DATA', `Línea ${n}: indica el precio de venta neto del producto nuevo`);
+      const newPrice = l.priceClp ?? (l.priceNetClp !== undefined ? addIva(l.priceNetClp) : np.priceClp);
+      if (newPrice === undefined) throw new PosError('INVALID_DATA', `Línea ${n}: indica el precio de venta del producto nuevo`);
       if (!Number.isInteger(newPrice) || newPrice < 0) throw new PosError('INVALID_DATA', `Línea ${n}: el precio de venta del producto nuevo es inválido`);
       const bc = np.barcode?.trim();
       if (bc && (newBarcodes.has(bc) || this.state.products.some((p) => p.barcode === bc))) throw new PosError('INVALID_DATA', `Línea ${n}: ya existe un producto con ese código de barras`);
@@ -852,7 +930,7 @@ export class PosEngine {
     const id = this.id('purchase');
     const lines: PurchaseLine[] = [];
     for (const l of input.lines) {
-      const newPrice = l.priceNetClp !== undefined ? addIva(l.priceNetClp) : undefined;
+      const newPrice = l.priceClp ?? (l.priceNetClp !== undefined ? addIva(l.priceNetClp) : undefined);
       const productId = l.productId ?? this.upsertProduct({ ...l.newProduct!, priceClp: newPrice ?? l.newProduct!.priceClp!, costClp: l.unitCostClp }).id;
       const product = this.state.products.find((p) => p.id === productId)!;
       if (l.productId && newPrice !== undefined) this.applyPrice(product, newPrice); // el precio sube con la inflación: el nuevo rige desde esta compra
@@ -939,14 +1017,13 @@ export class PosEngine {
   // ---------- consumo propio ----------
   /**
    * Registra el contenido del carrito como consumo propio: descuenta el stock y lo valoriza al costo.
-   * No es una venta: no hay cobro, boleta ni folio, y no suma ingresos ni utilidad.
+   * No es una venta: no hay cobro ni comprobante, y no suma ingresos ni utilidad.
    */
   registerConsumption(cartId: string, note?: string | null): Consumption {
     const cart = this.openCart(cartId);
     if (cart.lines.length === 0) throw new PosError('EMPTY_CART', 'El carrito está vacío');
     if (cart.channel !== 'physical') throw new PosError('NOT_ALLOWED', 'El consumo solo se registra en la caja');
-    const shift = this.openShiftRef();
-    if (!shift) throw new PosError('NO_SHIFT', 'Debe haber una jornada abierta para registrar un consumo');
+    const shift = this.resolveShift(cart.shiftId, 'Debe haber una jornada abierta para registrar un consumo');
     const iso = this.now().toISOString();
     const consumptions = this.state.consumptions!;
     const id = this.id('cons');
@@ -1021,22 +1098,13 @@ export class PosEngine {
   }
 
   // ---------- ventas, historial, anulación ----------
-  foliosRemaining(): number {
-    return Math.max(0, this.state.lastFolio - this.state.nextFolio + 1);
-  }
-
-  currentFolio(): number {
-    return this.state.nextFolio;
-  }
-
-  getSale(id: string): Sale & { document: TaxDocument | null } {
+  getSale(id: string): Sale {
     const s = this.state.sales.find((x) => x.id === id);
     if (!s) throw new PosError('NOT_FOUND', 'Venta no existe');
-    const document = this.state.documents.find((d) => d.id === s.documentId) ?? null;
-    return clone({ ...s, document });
+    return clone(s);
   }
 
-  listSales(filter: SalesFilter = {}): (Sale & { folio: number | null })[] {
+  listSales(filter: SalesFilter = {}): Sale[] {
     const f = filter ?? {};
     const rows = this.state.sales
       .filter((s) =>
@@ -1046,13 +1114,10 @@ export class PosEngine {
         (!f.to || santiagoDay(s.paidAt) <= f.to))
       .slice(-(f.limit ?? 100))
       .reverse();
-    return clone(rows.map((s) => ({ ...s, folio: this.state.documents.find((d) => d.id === s.documentId)?.folio ?? null })));
+    return clone(rows);
   }
 
-  /**
-   * Anula una venta y devuelve el stock. En la realidad, una boleta emitida se anula con una
-   * nota de crédito electrónica (DTE 61); aquí queda marcada para emitirla con el certificador.
-   */
+  /** Anula una venta y devuelve el stock. La venta queda marcada como anulada y no suma en los reportes. */
   voidSale(saleId: string, reason?: string | null): Sale {
     const sale = this.state.sales.find((s) => s.id === saleId);
     if (!sale) throw new PosError('NOT_FOUND', 'Venta no existe');
@@ -1147,12 +1212,152 @@ export class PosEngine {
     t.status = 'done';
   }
 
+  // ---------- tienda web pública ----------
+  /** Catálogo para el público: solo lo publicado y activo, sin costos ni códigos internos. Stock del canal online. */
+  publicCatalog(): PublicProduct[] {
+    const branchId = this.state.branches[0]?.id;
+    if (!branchId) return [];
+    return this.state.products
+      .filter((p) => p.active && p.published)
+      .map((p) => ({ id: p.id, name: p.name, category: p.category, priceClp: p.priceClp, available: Math.max(0, this.available(branchId, p.id, 'online')) }));
+  }
+
+  /** Cancela los pedidos web sin pagar con más de `maxAgeHours` horas, para devolver el stock que reservaron. Devuelve cuántos. */
+  expireWebOrders(maxAgeHours = WEB_ORDER_TTL_HOURS): number {
+    const limit = this.now().getTime() - maxAgeHours * 3_600_000;
+    const old = this.state.tickets.filter((t) => t.status === 'open' && !t.paid && t.channel === 'web' && Date.parse(t.createdAt) < limit);
+    for (const t of old) this.cancelTicket(t.id);
+    return old.length;
+  }
+
+  /**
+   * Pedido de un cliente anónimo de la tienda web: reserva el stock online y deja un pedido abierto (sin pagar, se cobra al retirar).
+   * Es todo o nada: si un producto no alcanza, no queda nada reservado.
+   */
+  placeWebOrder(input: WebOrderInput): Ticket {
+    const name = input.customerName?.trim() ?? '';
+    const phone = input.phone?.trim() ?? '';
+    const email = input.email?.trim() ?? '';
+    if (!name || name.length > 80) throw new PosError('CUSTOMER_REQUIRED', 'Indica tu nombre');
+    if (phone.replace(/\D/g, '').length < 8 || phone.length > 20) throw new PosError('INVALID_DATA', 'Indica un teléfono de contacto válido');
+    if (email && (email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new PosError('INVALID_DATA', 'El correo no es válido');
+    const note = input.note?.trim() ?? '';
+    if (note.length > 300) throw new PosError('INVALID_DATA', 'La nota es demasiado larga');
+    const items = Array.isArray(input.items) ? input.items : [];
+    if (items.length === 0) throw new PosError('EMPTY_CART', 'El pedido está vacío');
+    if (items.length > WEB_ORDER_MAX_LINES) throw new PosError('INVALID_DATA', 'El pedido tiene demasiados productos distintos');
+    const branchId = this.state.branches[0]?.id;
+    if (!branchId) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    this.expireWebOrders();
+    const pending = this.state.tickets.filter((t) => t.status === 'open' && !t.paid && t.channel === 'web').length;
+    if (pending >= WEB_ORDER_MAX_PENDING) throw new PosError('NOT_ALLOWED', 'La tienda no puede recibir más pedidos por ahora');
+
+    const cart = this.createCart(branchId, 'online', { name, phone, email: email || undefined });
+    this.cartOf(cart.id).pickup = true;
+    try {
+      for (const it of items) {
+        if (typeof it?.productId !== 'string' || !Number.isInteger(it.quantity) || it.quantity < 1 || it.quantity > WEB_ORDER_MAX_QTY) {
+          throw new PosError('INVALID_QTY', 'Cantidad inválida');
+        }
+        this.cartAdd(cart.id, it.productId, it.quantity);
+      }
+      return this.holdCart(cart.id, { customerName: name, phone, email, channel: 'web', note });
+    } catch (err) {
+      this.releaseAll(this.cartOf(cart.id));
+      delete this.state.carts[cart.id];
+      throw err;
+    }
+  }
+
   // ---------- reportes ----------
   salesReport(from: string, to: string, branchId?: string | null): SalesReport {
     return buildSalesReport(
-      this.state.sales.filter((s) => !branchId || s.branchId === branchId), (id) => this.state.documents.find((d) => d.id === id)?.folio ?? null, from, to,
+      this.state.sales.filter((s) => !branchId || s.branchId === branchId), from, to,
       (this.state.consumptions ?? []).filter((c) => !branchId || c.branchId === branchId),
     );
+  }
+
+  // ---------- datos del negocio ----------
+  getBusiness(): Business {
+    return clone(this.state.business!);
+  }
+
+  /** Datos que salen en el encabezado de los comprobantes. El RUT, si se indica, se valida y normaliza. */
+  updateBusiness(input: Partial<Business>): Business {
+    const name = (input.name ?? this.state.business!.name ?? '').trim();
+    if (!name) throw new PosError('INVALID_DATA', 'El nombre del negocio es obligatorio');
+    const text = (v: string | undefined) => v?.trim() || undefined;
+    let rut = text(input.rut);
+    if (rut) {
+      if (!isValidRut(rut)) throw new PosError('INVALID_RUT', 'RUT del negocio inválido');
+      rut = normalizeRut(rut);
+    }
+    this.state.business = {
+      name, rut, razonSocial: text(input.razonSocial), giro: text(input.giro), direccion: text(input.direccion),
+      comuna: text(input.comuna), phone: text(input.phone),
+    };
+    return clone(this.state.business);
+  }
+
+  // ---------- ingreso rápido de inventario (escaneo) ----------
+  /** Busca un producto por código de barras, SKU o id. */
+  findProduct(code: string): Product | null {
+    const c = (code ?? '').trim();
+    const p = c ? this.product(c) : undefined;
+    return p ? clone(p) : null;
+  }
+
+  /**
+   * Ingreso rápido por escaneo, sin proveedor ni documento (p. ej. el inventario inicial de un negocio nuevo).
+   * Si el código no existe crea el producto (nombre y precio de venta con IVA obligatorios); si existe suma stock y, si se indica,
+   * actualiza costo (promedio ponderado) y precio. Para compras con factura usar `registerPurchase`.
+   */
+  receiveStock(branchId: string, input: ReceiveInput): { product: Product; created: boolean; qty: number } {
+    if (!this.state.branches.some((b) => b.id === branchId)) throw new PosError('NOT_FOUND', 'Sucursal no existe');
+    const barcode = (input.barcode ?? '').trim();
+    if (!barcode) throw new PosError('INVALID_DATA', 'Falta el código de barras');
+    const quantity = input.quantity ?? 1;
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 100_000) throw new PosError('INVALID_QTY', 'La cantidad debe ser un entero entre 1 y 100.000');
+    const channel: Channel = input.channel ?? 'physical';
+    if (input.costClp !== undefined && input.costClp !== null && (!Number.isInteger(input.costClp) || input.costClp < 0)) {
+      throw new PosError('INVALID_AMOUNT', 'El costo debe ser un entero de 0 o más');
+    }
+    if (input.priceNetClp !== undefined && input.priceNetClp !== null && (!Number.isInteger(input.priceNetClp) || input.priceNetClp < 0)) {
+      throw new PosError('INVALID_AMOUNT', 'El precio neto debe ser un entero de 0 o más');
+    }
+    const hasCost = input.costClp !== undefined && input.costClp !== null;
+    if (input.priceClp !== undefined && input.priceClp !== null && (!Number.isInteger(input.priceClp) || input.priceClp < 0)) {
+      throw new PosError('INVALID_AMOUNT', 'El precio de venta debe ser un entero de 0 o más');
+    }
+    // El precio con IVA (el que ve el cliente) manda; el neto sigue aceptándose para quien ya lo usa.
+    const grossPrice = input.priceClp ?? (input.priceNetClp !== undefined && input.priceNetClp !== null ? addIva(input.priceNetClp) : undefined);
+    const hasPrice = grossPrice !== undefined && grossPrice !== null;
+
+    let product = this.product(barcode);
+    const created = !product;
+    if (!product) {
+      if (!input.name?.trim()) throw new PosError('INVALID_DATA', 'El producto no existe: indica su nombre para crearlo');
+      if (!hasPrice) throw new PosError('INVALID_DATA', 'El producto no existe: indica su precio de venta para crearlo');
+      const made = this.upsertProduct({
+        name: input.name, barcode, category: input.category, priceClp: grossPrice!, costClp: input.costClp ?? 0,
+        published: input.published ?? true,
+      });
+      product = this.state.products.find((p) => p.id === made.id)!;
+    } else {
+      if (!product.active) throw new PosError('NOT_ALLOWED', `${product.name} está inactivo: actívalo antes de ingresar stock`);
+      if (hasCost) {
+        const before = Math.max(0, this.totalQty(product.id));
+        product.costClp = before > 0 ? Math.round((before * product.costClp + quantity * input.costClp!) / (before + quantity)) : input.costClp!;
+      }
+      if (hasPrice && grossPrice! !== product.priceClp) this.recordPriceChange(product, grossPrice!, 'Ingreso de inventario');
+    }
+    const cell = this.cell(branchId, product.id, channel);
+    cell.qty += quantity;
+    this.state.movements.push({
+      id: this.id('mov'), branchId, productId: product.id, channel, delta: quantity, reason: 'initial', at: this.now().toISOString(),
+      unitCostClp: hasCost ? input.costClp! : product.costClp, unitPriceClp: product.priceClp,
+    });
+    return { product: clone(product), created, qty: cell.qty };
   }
 
   // ---------- persistencia ----------

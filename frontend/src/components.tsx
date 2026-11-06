@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Cart, ClientBalance, ClientWithDebt, Customer, PayMethod } from '@nexus/core';
-import { PAY_METHODS, PAY_METHOD_LABEL, formatClp } from '@nexus/core';
+import { INTERNAL_RECEIPT_NOTICE, PAY_METHODS, PAY_METHOD_LABEL, formatClp } from '@nexus/core';
 import type { PayPhase, SaleDetail } from './hooks';
 import type { PosApi } from './api/types';
-import { estadoCuentaHtml, fmtDateTime, printHtml } from './format';
+import { businessHeaderHtml, esc, estadoCuentaHtml, fmtDateTime, printHtml } from './format';
 import { msg } from './hooks';
+import { useActiveShift } from './activeShift';
 
 export function Modal(props: { title?: string; onClose: () => void; children: ReactNode; wide?: boolean; xwide?: boolean; className?: string; header?: ReactNode }) {
   useEffect(() => {
@@ -42,6 +43,7 @@ export function Dropdown(props: { label: ReactNode; children: (close: () => void
 
 /** Deuda de convenio de un cliente: detalle y pago (total o abono). Necesita jornada abierta. */
 export function DebtModal(props: { api: PosApi; client: { id: string; name: string }; onClose: () => void; onPaid?: () => void }) {
+  const { shiftId } = useActiveShift();
   const [balance, setBalance] = useState<ClientBalance | null>(null);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<PayMethod>('cash');
@@ -61,7 +63,7 @@ export function DebtModal(props: { api: PosApi; client: { id: string; name: stri
   const pay = async () => {
     try {
       setBusy(true); setError(null);
-      await props.api.rpc.payClientDebt(props.client.id, value, method);
+      await props.api.rpc.payClientDebt(props.client.id, value, method, shiftId);
       await load();
       props.onPaid?.();
     } catch (e) { setError(msg(e)); } finally { setBusy(false); }
@@ -125,14 +127,17 @@ export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: 
   const [items, setItems] = useState<ClientWithDebt[]>([]);
   const [idx, setIdx] = useState(-1);
   const [debt, setDebt] = useState<number | null>(null);
+  const [credit, setCredit] = useState<{ available: number | null; limit?: number }>({ available: null });
   const [debtOpen, setDebtOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => setText(customer.name ?? ''), [customer.name]);
 
   const loadDebt = async () => {
-    if (!customer.clientId) { setDebt(null); return; }
-    setDebt((await props.api.rpc.clientBalance(customer.clientId)).debtClp);
+    if (!customer.clientId) { setDebt(null); setCredit({ available: null }); return; }
+    const b = await props.api.rpc.clientBalance(customer.clientId);
+    setDebt(b.debtClp);
+    setCredit({ available: b.availableCreditClp, limit: b.creditLimitClp });
   };
   useEffect(() => { loadDebt().catch(() => setDebt(null)); }, [customer.clientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -201,6 +206,11 @@ export function CustomerBar(props: { api: PosApi; customer: Customer; onChange: 
         <div className="credit-line">
           <span className={'credit-pill' + (customer.creditAuthorized ? ' ok' : '')}>{customer.creditAuthorized ? 'Convenio autorizado' : 'Sin convenio'}</span>
           <span>Debe en total: <b className={debt > 0 ? 'debt' : ''}>{formatClp(debt)}</b></span>
+          {customer.creditAuthorized && credit.available !== null && (
+            credit.available === 0
+              ? <span className="credit-pill" role="alert">⚠ Sin cupo de convenio (tope {formatClp(credit.limit ?? 0)})</span>
+              : <span>Cupo disponible: <b>{formatClp(credit.available)}</b> <small>de {formatClp(credit.limit ?? 0)}</small></span>
+          )}
           {debt > 0 && <button className="btn primary sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setDebtOpen(true)}>Pagar deuda</button>}
         </div>
       )}
@@ -323,7 +333,7 @@ export function PaymentModal(props: {
             <div className="ok" aria-hidden>✓</div>
             <h3>Pago aprobado</h3>
             <Receipt sale={sale} />
-            <p className="hint">Documento sin firma ni timbre: modo demostración (no se envía al SII).</p>
+            <p className="hint">{INTERNAL_RECEIPT_NOTICE}</p>
             <div className="row-btns">
               <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Imprimir</button>
               <button className="btn primary" onClick={props.onNew}>Nueva venta</button>
@@ -352,7 +362,7 @@ export function PaymentModal(props: {
 export function Receipt({ sale }: { sale: SaleDetail }) {
   return (
     <div className="receipt">
-      <div><span>Boleta electrónica N°</span><strong>{sale.document?.folio ?? '—'}</strong></div>
+      <div><span>Comprobante de venta interno</span><strong>Pedido #{sale.number}</strong></div>
       {sale.customer.name && <div><span>Cliente</span><span>{sale.customer.name}</span></div>}
       {sale.discountClp > 0 && <div><span>Descuento ({sale.promotionCode})</span><span>−{formatClp(sale.discountClp)}</span></div>}
       <div><span>Neto</span><span>{formatClp(sale.netClp)}</span></div>
@@ -369,10 +379,14 @@ export function Receipt({ sale }: { sale: SaleDetail }) {
   );
 }
 
+/** Comprobante de venta interno: control del negocio, NO es un documento tributario. */
 export function printReceipt(sale: SaleDetail): void {
-  const lines = sale.lines.map((l) => `<div class="r"><span>${l.quantity} × ${l.name}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>`).join('');
-  printHtml(`<h1>Nexus · Boleta N° ${sale.document?.folio ?? '—'}</h1><hr>${lines}<hr>
+  const lines = sale.lines.map((l) => `<div class="r"><span>${l.quantity} × ${esc(l.name)}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>`).join('');
+  printHtml(`${businessHeaderHtml()}<hr><div><b>COMPROBANTE DE VENTA INTERNO</b></div><div>Pedido #${sale.number} · ${esc(fmtDateTime(sale.paidAt))}</div>
+    ${sale.customer.name ? `<div>Cliente: ${esc(sale.customer.name)}</div>` : ''}<hr>${lines}<hr>
     ${sale.discountClp ? `<div class="r"><span>Descuento</span><span>−${formatClp(sale.discountClp)}</span></div>` : ''}
     <div class="r"><span>Neto</span><span>${formatClp(sale.netClp)}</span></div><div class="r"><span>IVA 19%</span><span>${formatClp(sale.ivaClp)}</span></div>
-    <div class="r"><b>Total</b><b>${formatClp(sale.totalClp)}</b></div><hr><div>Documento de demostración sin timbre SII</div>`);
+    <div class="r"><b>Total</b><b>${formatClp(sale.totalClp)}</b></div>
+    ${sale.method === 'cash' && sale.receivedClp !== undefined ? `<div class="r"><span>Recibido</span><span>${formatClp(sale.receivedClp)}</span></div><div class="r"><b>Vuelto</b><b>${formatClp(sale.changeClp ?? 0)}</b></div>` : ''}
+    <hr><div style="text-align:center;font-size:11px">${esc(INTERNAL_RECEIPT_NOTICE)}</div>`);
 }

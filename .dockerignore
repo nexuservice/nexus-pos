@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+dist
+**/dist
+backend/data
+.git
+.gitignore
+.claude
+docs
+*.log
+.env
+.env.*
+Dockerfile
+.dockerignore

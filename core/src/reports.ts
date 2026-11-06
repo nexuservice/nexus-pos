@@ -21,13 +21,12 @@ const daysBetween = (a: string, b: string): number =>
 const pct = (cur: number, prev: number): number | null => (prev === 0 ? null : Math.round(((cur - prev) / prev) * 100));
 const margin = (revenue: number, profit: number): number => (revenue === 0 ? 0 : Math.round((profit / revenue) * 1000) / 10);
 
-function kpis(all: Sale[], folioOf: (documentId: string | null) => number | null): Kpis {
+function kpis(all: Sale[]): Kpis {
   const done = all.filter((s) => s.status === 'completed');
   const voided = all.filter((s) => s.status === 'voided');
   const revenue = done.reduce((s, x) => s + x.totalClp, 0);
   // Utilidad bruta = ingreso (IVA incluido, tal como se publica el precio) − costo de los productos.
   const cost = done.reduce((s, x) => s + x.lines.reduce((c, l) => c + l.costClp * l.quantity, 0), 0);
-  const folios = done.map((s) => folioOf(s.documentId)).filter((f): f is number => f !== null);
   return {
     count: done.length,
     revenueClp: revenue,
@@ -39,14 +38,12 @@ function kpis(all: Sale[], folioOf: (documentId: string | null) => number | null
     marginPct: margin(revenue, revenue - cost),
     voidedCount: voided.length,
     voidedClp: voided.reduce((s, x) => s + x.totalClp, 0),
-    folioFrom: folios.length ? Math.min(...folios) : null,
-    folioTo: folios.length ? Math.max(...folios) : null,
   };
 }
 
 /** Reporte por rango [from, to] (fechas locales, inclusivas) con comparación contra el período anterior. */
 export function buildSalesReport(
-  sales: Sale[], folioOf: (documentId: string | null) => number | null, from: string, to: string, consumptions: Consumption[] = [],
+  sales: Sale[], from: string, to: string, consumptions: Consumption[] = [],
 ): SalesReport {
   const inRange = (s: Sale, a: string, b: string) => {
     const d = santiagoDay(s.paidAt);
@@ -57,8 +54,8 @@ export function buildSalesReport(
   const prevFrom = addDays(prevTo, -(span - 1));
   const cur = sales.filter((s) => inRange(s, from, to));
   const prev = sales.filter((s) => inRange(s, prevFrom, prevTo));
-  const k = kpis(cur, folioOf);
-  const p = kpis(prev, folioOf);
+  const k = kpis(cur);
+  const p = kpis(prev);
   const done = cur.filter((s) => s.status === 'completed');
 
   const dayMap = new Map<string, { count: number; revenueClp: number }>();

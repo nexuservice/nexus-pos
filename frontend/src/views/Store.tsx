@@ -66,7 +66,7 @@ export function StoreView({ api, branchId }: { api: PosApi; branchId: string | n
             </span>
             <input placeholder="Nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <input placeholder="Correo" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            <input placeholder="RUT (opcional, para la boleta)" value={form.rut} onChange={(e) => setForm({ ...form, rut: e.target.value })} />
+            <input placeholder="RUT (opcional)" value={form.rut} onChange={(e) => setForm({ ...form, rut: e.target.value })} />
             {formError && <div className="alert" role="alert">{formError}</div>}
             <button className="btn primary" disabled={empty} onClick={() => checkout('mercadopago')}>Pagar con Mercado Pago</button>
             <button className="btn ghost" disabled={empty} onClick={() => checkout('transbank')}>Pagar con Webpay</button>

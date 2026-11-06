@@ -1,0 +1,39 @@
+# Configuración para Fly.io. Antes de usarla:
+#   1) Cambia `app` por un nombre único (por ejemplo nexus-pos-tuempresa).
+#   2) Elige la región más cercana con `fly platform regions` (no verifiqué si hay Santiago; gru = São Paulo, iad = Virginia).
+#   3) Crea el volumen y los secretos (ver README, sección "Publicar en Fly.io").
+app = "nexus-pos"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  NEXUS_DATA = "/data"
+  TRUST_PROXY = "1"
+
+# Disco persistente: aquí viven todos los negocios. Un volumen existe en UNA sola máquina y región.
+[[mounts]]
+  source = "nexus_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Un POS no puede dormirse: siempre una máquina encendida. Y UNA sola, porque el estado de cada negocio vive en memoria y en este volumen.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

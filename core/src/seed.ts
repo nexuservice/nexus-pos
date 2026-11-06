@@ -1,4 +1,4 @@
-import type { Client, EngineState, Product, Promotion } from './types';
+import type { Business, Client, EngineState, Product, Promotion } from './types';
 
 const P = (n: number, name: string, category: string, priceClp: number, published = true): Product => ({
   id: `prod_${n}`,
@@ -46,8 +46,23 @@ export const SEED_PROMOTIONS: Promotion[] = [
   { id: 'promo_seed_3', name: 'Descuento fijo $500', type: 'fixed', value: 500, code: 'MENOS500', validUntil: '2027-12-31', active: true },
 ];
 
-/** Estado inicial de demostración: 1 sucursal, stock en ambos canales, un cajero (PIN 1234) y folios. */
-export function seedState(opts: { physical?: number; online?: number; folioFrom?: number; folioTo?: number } = {}): EngineState {
+/**
+ * Negocio nuevo y vacío, para un cliente real: una sucursal, sin productos, sin stock, sin clientes,
+ * sin promociones y sin cajeros (el primero se crea en la configuración inicial).
+ */
+export function emptyState(business: Business = { name: 'Mi negocio' }): EngineState {
+  return {
+    branches: [{ id: 'branch_1', code: 'MAT', name: business.name }],
+    products: [], clients: [], cashiers: [], promotions: [], shifts: [], tickets: [],
+    stock: {}, carts: {}, payments: {}, sales: [], movements: [],
+    creditPayments: [], consumptions: [], purchases: [], priceChanges: [],
+    business: structuredClone(business),
+    saleSeq: 0, ticketSeq: 0, seq: 0,
+  };
+}
+
+/** Estado de ejemplo con productos, stock y un cajero (PIN 1234). Solo para pruebas y desarrollo: los clientes reales parten de `emptyState`. */
+export function seedState(opts: { physical?: number; online?: number } = {}): EngineState {
   const physical = opts.physical ?? 40;
   const online = opts.online ?? 15;
   const stock: EngineState['stock'] = {};
@@ -63,9 +78,8 @@ export function seedState(opts: { physical?: number; online?: number; folioFrom?
     promotions: structuredClone(SEED_PROMOTIONS),
     shifts: [], tickets: [],
     stock,
-    carts: {}, payments: {}, sales: [], documents: [], movements: [], creditPayments: [], consumptions: [], purchases: [], priceChanges: [],
-    nextFolio: opts.folioFrom ?? 1,
-    lastFolio: opts.folioTo ?? 500,
+    carts: {}, payments: {}, sales: [], movements: [], creditPayments: [], consumptions: [], purchases: [], priceChanges: [],
+    business: { name: 'Casa Matriz' },
     saleSeq: 0, ticketSeq: 0, seq: 0,
   };
 }

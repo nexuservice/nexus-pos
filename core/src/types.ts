@@ -40,11 +40,15 @@ export interface Client {
   isVip: boolean;
   /** Autorizado para pagar con convenio (a crédito). Exige RUT. */
   creditAuthorized?: boolean;
+  /** Tope de lo que puede deber a convenio (CLP entero). Sin valor = sin tope. */
+  creditLimitClp?: number;
 }
 
 /** Cliente con lo que debe en total por ventas a convenio (ya descontados sus abonos). */
 export interface ClientWithDebt extends Client {
   debtClp: number;
+  /** Cupo que le queda (tope menos deuda, nunca negativo). null si no tiene tope. */
+  availableCreditClp: number | null;
 }
 
 /** Abono a la deuda de convenio de un cliente. */
@@ -63,6 +67,9 @@ export interface ClientBalance {
   clientName: string;
   clientRut?: string;
   debtClp: number;
+  /** Tope de convenio del cliente y cupo que le queda. Sin tope: undefined y null. */
+  creditLimitClp?: number;
+  availableCreditClp: number | null;
   /** Total vendido a convenio (sin las ventas anuladas). */
   creditSalesClp: number;
   paidClp: number;
@@ -128,6 +135,10 @@ export interface Cart {
   totalClp: number;
   promotion?: AppliedPromo;
   status: 'open' | 'paying' | 'closed' | 'held';
+  /** Pedido de la tienda web que se cobra al retirar: lo cobra el cajero en caja (con jornada y cualquier medio), no el cliente online. */
+  pickup?: boolean;
+  /** Caja (jornada) en la que se cobra. Sin valor = la única jornada abierta. */
+  shiftId?: string;
 }
 
 export type PaymentStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
@@ -173,7 +184,6 @@ export interface Sale {
   voidReason?: string;
   createdAt: string;
   paidAt: string;
-  documentId: string | null;
 }
 
 /** Cambio del precio de venta de un producto (corrección o alza). Las ventas ya hechas conservan el precio al que se vendieron. */
@@ -241,6 +251,8 @@ export interface PurchaseLineInput {
   unitCostClp: number;
   /** Precio de venta neto unitario nuevo (el sistema calcula el valor con IVA). Si se omite, el precio de un producto existente no cambia. */
   priceNetClp?: number;
+  /** Precio de venta unitario nuevo CON IVA (el que ve el cliente). Si viene, manda sobre priceNetClp. */
+  priceClp?: number;
 }
 
 export interface PurchaseInput {
@@ -258,7 +270,7 @@ export interface PurchaseInput {
 
 /**
  * Consumo propio: salida de inventario que no es una venta. Se valoriza al costo, así que no genera
- * ingreso ni ganancia, y no emite boleta ni usa folio.
+ * ingreso ni ganancia, y no genera comprobante.
  */
 export interface Consumption {
   id: string;
@@ -278,24 +290,13 @@ export interface Consumption {
   createdAt: string;
 }
 
-export interface TaxDocument {
-  id: string;
-  saleId: string;
-  dteType: 39 | 33;
-  folio: number;
-  xml: string;
-  /** Sin firma ni timbre: "draft" hasta integrarse con un certificador SII. */
-  siiStatus: 'draft';
-  issuedAt: string;
-}
-
 export interface StockMovement {
   id: string;
   branchId: string;
   productId: string;
   channel: Channel;
   delta: number;
-  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption' | 'purchase';
+  reason: 'sale' | 'adjustment' | 'transfer' | 'return' | 'consumption' | 'purchase' | 'initial';
   refId?: string;
   /** Costo neto unitario y precio de venta unitario (con IVA) vigentes en ese movimiento: con la inflación van cambiando. */
   unitCostClp?: number;
@@ -317,7 +318,7 @@ export interface StockCardRow {
   detail: string;
   /** Las compras se fechan con el día del documento, así que solo cuenta la fecha, no la hora. */
   dateOnly?: boolean;
-  /** Venta de origen (o la venta anulada), para abrir su boleta desde la tarjeta. */
+  /** Venta de origen (o la venta anulada), para abrir su comprobante desde la tarjeta. */
   saleId?: string;
   entry: number;
   exit: number;
@@ -362,13 +363,40 @@ export interface StockCell {
   reserved: number;
 }
 
-export interface Emisor {
-  rut: string;
-  razonSocial: string;
-  giro: string;
-  direccion: string;
-  comuna: string;
+/**
+ * Datos del negocio, para el encabezado de los comprobantes internos.
+ * Nexus es un sistema de control interno: el comprobante de venta NO es un documento tributario.
+ */
+export interface Business {
+  /** Nombre comercial. */
+  name: string;
+  rut?: string;
+  razonSocial?: string;
+  giro?: string;
+  direccion?: string;
+  comuna?: string;
+  phone?: string;
 }
+
+/** Ingreso rápido de un producto por escaneo (sin proveedor ni documento). */
+export interface ReceiveInput {
+  barcode: string;
+  quantity?: number;
+  /** Solo para crear un producto nuevo. */
+  name?: string;
+  category?: string;
+  /** Costo unitario neto. */
+  costClp?: number | null;
+  /** Precio de venta NETO unitario (el sistema calcula el valor con IVA). */
+  priceNetClp?: number | null;
+  /** Precio de venta unitario CON IVA (el que ve el cliente). Si viene, manda sobre priceNetClp. */
+  priceClp?: number | null;
+  published?: boolean;
+  channel?: Channel;
+}
+
+/** Texto legal que acompaña a todo comprobante de venta. */
+export const INTERNAL_RECEIPT_NOTICE = 'Comprobante de venta interno · No válido como documento tributario';
 
 export interface PaymentEvent {
   paymentId: string;
@@ -452,8 +480,6 @@ export interface Kpis {
   marginPct: number;
   voidedCount: number;
   voidedClp: number;
-  folioFrom: number | null;
-  folioTo: number | null;
 }
 
 export interface SalesReport {
@@ -486,8 +512,9 @@ export interface EngineState {
   carts: Record<string, Cart>;
   payments: Record<string, Payment>;
   sales: Sale[];
-  documents: TaxDocument[];
   movements: StockMovement[];
+  /** Datos del negocio. Opcional: las bases guardadas antes de esta función no lo traen. */
+  business?: Business;
   /** Abonos a deudas de convenio. Opcional: las bases guardadas antes de esta función no lo traen. */
   creditPayments?: CreditPayment[];
   /** Consumos propios. Opcional: las bases guardadas antes de esta función no lo traen. */
@@ -496,8 +523,6 @@ export interface EngineState {
   purchases?: Purchase[];
   /** Historial de cambios de precio. Opcional: las bases guardadas antes de esta función no lo traen. */
   priceChanges?: PriceChange[];
-  nextFolio: number;
-  lastFolio: number;
   saleSeq: number;
   ticketSeq: number;
   seq: number;

@@ -17,10 +17,11 @@ interface Line {
   /** Id del producto existente, o NEW para crear uno con la compra. */
   productId: string;
   qty: string;
+  /** Costo unitario CON IVA (se guarda neto). */
   cost: string;
   name: string;
   category: string;
-  /** Precio de venta NETO unitario nuevo; el valor con IVA se calcula. Vacío = no cambia el precio de un producto existente. */
+  /** Precio de venta unitario nuevo CON IVA, el que ve el cliente. Vacío = no cambia el precio de un producto existente. */
   price: string;
   barcode: string;
 }
@@ -53,8 +54,9 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
   const addLine = () => setLines((ls) => [...ls, blankLine(Math.max(0, ...ls.map((l) => l.key)) + 1)]);
   const removeLine = (key: number) => setLines((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
 
-  const net = useMemo(() => lines.reduce((n, l) => n + num(l.qty) * num(l.cost), 0), [lines]);
-  const iva = Math.round(net * 0.19);
+  // Los costos se digitan con IVA: el total con IVA es la suma exacta y de ahí salen el neto y el IVA.
+  const total = useMemo(() => lines.reduce((n, l) => n + num(l.qty) * num(l.cost), 0), [lines]);
+  const { netClp: net, ivaClp: iva } = splitIva(total);
   const units = lines.reduce((n, l) => n + num(l.qty), 0);
 
   const pickSupplier = (name: string) => {
@@ -69,16 +71,17 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
       const input: PurchaseInput = {
         branchId, supplierName, supplierRut: supplierRut.trim() || undefined, docType, docNumber, docDate, note: note.trim() || undefined, updateCost,
         lines: lines.map((l) => {
-          const priceNetClp = l.price.trim() ? num(l.price) : undefined;
+          const priceClp = l.price.trim() ? num(l.price) : undefined;
+          const unitCostClp = splitIva(num(l.cost)).netClp; // el sistema guarda el costo neto
           return l.productId === NEW
-            ? { newProduct: { name: l.name, category: l.category || undefined, barcode: l.barcode.trim() || undefined }, quantity: num(l.qty), unitCostClp: num(l.cost), priceNetClp }
-            : { productId: l.productId || undefined, quantity: num(l.qty), unitCostClp: num(l.cost), priceNetClp };
+            ? { newProduct: { name: l.name, category: l.category || undefined, barcode: l.barcode.trim() || undefined }, quantity: num(l.qty), unitCostClp, priceClp }
+            : { productId: l.productId || undefined, quantity: num(l.qty), unitCostClp, priceClp };
         }),
       };
       const missing = lines.findIndex((l) => !l.productId);
       if (missing >= 0) throw new Error(`Línea ${missing + 1}: elige un producto o crea uno nuevo`);
       const noPrice = lines.findIndex((l) => l.productId === NEW && !l.price.trim());
-      if (noPrice >= 0) throw new Error(`Línea ${noPrice + 1}: indica el precio de venta neto del producto nuevo`);
+      if (noPrice >= 0) throw new Error(`Línea ${noPrice + 1}: indica el precio de venta del producto nuevo`);
       setDone(await api.rpc.registerPurchase(input));
       onSaved();
     } catch (e) { setError(msg(e)); } finally { setBusy(false); }
@@ -135,11 +138,11 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
                   </select>
                 </label>
                 <label className="field">Cantidad<input inputMode="numeric" placeholder="0" value={l.qty} onChange={(e) => setLine(l.key, { qty: e.target.value })} /></label>
-                <label className="field">Costo unit. neto<input inputMode="numeric" placeholder="$0" value={l.cost} onChange={(e) => setLine(l.key, { cost: e.target.value })} /></label>
+                <label className="field">Costo unit. (con IVA)<input inputMode="numeric" placeholder="$0" value={l.cost} onChange={(e) => setLine(l.key, { cost: e.target.value })} /></label>
                 <div className="line-total-box">{formatClp(num(l.qty) * num(l.cost))}</div>
                 <button className="x" aria-label={`Quitar línea ${i + 1}`} disabled={lines.length === 1} onClick={() => removeLine(l.key)}>✕</button>
               </div>
-              {existing && <small className="hint">Costo actual {formatClp(existing.costClp)} · precio actual {formatClp(splitIva(existing.priceClp).netClp)} neto ({formatClp(existing.priceClp)} con IVA) · existencia {stock[existing.id] ?? 0}</small>}
+              {existing && <small className="hint">Costo actual {formatClp(addIva(existing.costClp))} con IVA · precio de venta actual {formatClp(existing.priceClp)} con IVA · existencia {stock[existing.id] ?? 0}</small>}
               {l.productId === NEW && (
                 <div className="row new">
                   <label className="field">Nombre *<input placeholder="Nombre del producto" value={l.name} onChange={(e) => setLine(l.key, { name: e.target.value })} /></label>
@@ -149,13 +152,13 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
               )}
               {l.productId && (
                 <div className="row price">
-                  <label className="field">Precio venta neto unitario{l.productId === NEW ? ' *' : ' (nuevo)'}
-                    <input inputMode="numeric" placeholder={existing ? String(splitIva(existing.priceClp).netClp) : '$0'} value={l.price} onChange={(e) => setLine(l.key, { price: e.target.value })} />
+                  <label className="field">Precio de venta unitario (con IVA){l.productId === NEW ? ' *' : ' (nuevo)'}
+                    <input inputMode="numeric" placeholder={existing ? String(existing.priceClp) : '$0'} value={l.price} onChange={(e) => setLine(l.key, { price: e.target.value })} />
                   </label>
                   <div className="price-iva">
                     {l.price.trim()
-                      ? <><b>{formatClp(addIva(num(l.price)))}</b> con IVA</>
-                      : existing ? <><b>{formatClp(existing.priceClp)}</b> con IVA (sin cambio)</> : <span className="hint">Se calcula con IVA</span>}
+                      ? <>Neto <b>{formatClp(splitIva(num(l.price)).netClp)}</b></>
+                      : existing ? <><b>{formatClp(existing.priceClp)}</b> con IVA (sin cambio)</> : <span className="hint">Con IVA incluido</span>}
                   </div>
                   <small className="hint">{l.productId === NEW ? 'Este será el precio de venta del producto.' : 'Déjalo vacío para mantener el precio. Si lo cambias, rige desde esta compra.'}</small>
                 </div>
@@ -168,7 +171,7 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
 
       <label className="check"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} /> Actualizar el costo de los productos (promedio ponderado con lo que ya hay)</label>
       <div className="purchase-totals">
-        <span>{units} unidad(es)</span><span>Neto <b>{formatClp(net)}</b></span><span>IVA 19% <b>{formatClp(iva)}</b></span><span>Total <b>{formatClp(net + iva)}</b></span>
+        <span>{units} unidad(es)</span><span>Neto <b>{formatClp(net)}</b></span><span>IVA 19% <b>{formatClp(iva)}</b></span><span>Total <b>{formatClp(total)}</b></span>
       </div>
       <Err text={error} />
       <div className="row-btns">

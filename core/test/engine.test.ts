@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   PosEngine, PosError, SimulatedGateway, payCart, seedState, splitIva, addIva, isValidRut, normalizeRut,
-  buildBoletaXml, parseBoletaXml, DEFAULT_EMISOR, RPC_METHODS, normalizePhone, whatsappUrl, whatsappMessage, formatClp,
+  emptyState, RPC_METHODS, normalizePhone, whatsappUrl, whatsappMessage, formatClp,
 } from '../src';
 
 const B = 'branch_1';
@@ -105,7 +105,7 @@ describe('concurrencia', () => {
     expect(e.available(B, COLA, 'physical')).toBe(0);
   });
 
-  it('pagos simultáneos: stock nunca negativo, folios únicos y consecutivos', async () => {
+  it('pagos simultáneos: stock nunca negativo y números de venta únicos y consecutivos', async () => {
     const e = make({ physical: 5 });
     const g = fast();
     const carts = Array.from({ length: 5 }, () => {
@@ -117,7 +117,6 @@ describe('concurrencia', () => {
     expect(paid.every((p) => p.status === 'approved')).toBe(true);
     const snap = e.snapshot();
     expect(snap.stock[`${B}:${COLA}:physical`]).toEqual({ qty: 0, reserved: 0 });
-    expect(snap.documents.map((d) => d.folio).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
     expect(snap.sales.map((s) => s.number).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
   });
 
@@ -148,7 +147,7 @@ describe('concurrencia', () => {
 });
 
 describe('pagos', () => {
-  it('pago aprobado descuenta stock, emite boleta y registra la venta', async () => {
+  it('pago aprobado descuenta stock y registra la venta', async () => {
     const e = make();
     const c = e.createCart(B, 'physical');
     e.cartAdd(c.id, COLA, 2);
@@ -158,7 +157,6 @@ describe('pagos', () => {
     const sale = e.getSale(p.saleId!);
     expect(sale).toMatchObject({ totalClp: 3980, number: 1, status: 'completed', cashierName: 'Cajero 1' });
     expect(sale.netClp + sale.ivaClp).toBe(3980);
-    expect(sale.document?.folio).toBe(1);
     expect(e.available(B, COLA, 'physical')).toBe(38);
   });
   it('efectivo calcula el vuelto y exige monto suficiente', async () => {
@@ -210,14 +208,10 @@ describe('pagos', () => {
     expect(() => e.beginPayment(c.id, 'cash')).toThrow(/tarjeta/);
     expect(e.beginPayment(c.id, 'credit').payment.provider).toBe('mercadopago');
   });
-  it('rechaza RUT inválido y sin folios no se cobra', () => {
+  it('rechaza RUT inválido', () => {
     const e = make();
     const c = e.createCart(B, 'online');
     expect(() => e.setCustomer(c.id, { rut: '12.345.678-9' })).toThrow(/RUT/);
-    const sinFolios = make({ folioFrom: 1, folioTo: 0 });
-    const c2 = sinFolios.createCart(B, 'physical');
-    sinFolios.cartAdd(c2.id, COLA, 1);
-    expect(() => sinFolios.beginPayment(c2.id, 'cash')).toThrow(/folios/);
   });
   it('emite eventos de pago reproducibles', async () => {
     const e = make();
@@ -260,6 +254,88 @@ describe('jornada (turno de caja)', () => {
     expect(closed).toMatchObject({ status: 'closed', notes: 'falta un billete', salesCount: 2 });
     expect(closed.difference).toEqual({ cash: -90, convenio: 0 });
     expect(e.currentShift()).toBeNull();
+  });
+});
+
+describe('varias cajas abiertas a la vez', () => {
+  /** Dos cajas abiertas: Cajero 1 (cashier_1) y Cajero 2, cada una con su fondo. */
+  function dos() {
+    const e = make();
+    const c2 = e.upsertCashier({ name: 'Cajero 2', pin: '4321' });
+    const s2 = e.openShift(c2.id, '4321', 20_000);
+    const s1 = e.openShifts().find((s) => s.cashierId === 'cashier_1')!;
+    return { e, s1, s2 };
+  }
+
+  it('permite abrir otra caja con otro cajero, pero no dos del mismo cajero', () => {
+    const { e, s1, s2 } = dos();
+    expect(e.openShifts().map((s) => s.id).sort()).toEqual([s1.id, s2.id].sort());
+    expect(() => e.openShift('cashier_1', '1234', 0)).toThrow(/ya tiene una jornada abierta/);
+    expect(() => e.openShift(s2.cashierId, '0000', 0)).toThrow(/PIN/);
+  });
+
+  it('con varias cajas abiertas hay que elegir en cuál operar', () => {
+    const { e } = dos();
+    expect(e.currentShift()).toBeNull();
+    expect(e.shiftInfo()).toBeNull();
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, COLA, 1);
+    expect(() => e.beginPayment(c.id, 'cash')).toThrow(/elige en cuál/);
+    expect(() => e.closeShift({})).toThrow(/elige en cuál/);
+  });
+
+  it('cada venta cae en la caja de su carrito y el arqueo de cada una es independiente', async () => {
+    const { e, s1, s2 } = dos();
+    const g = fast();
+    const a = e.createCart(B, 'physical', null, s1.id); e.cartAdd(a.id, COLA, 1);
+    const b = e.createCart(B, 'physical', null, s2.id); e.cartAdd(b.id, AGUA, 2);
+    await payCart(e, g, { cartId: a.id, method: 'cash', receivedClp: 2000 });
+    await payCart(e, g, { cartId: b.id, method: 'cash', receivedClp: 2000 });
+    expect(e.shiftInfo(s1.id)).toMatchObject({ salesCount: 1, salesTotalClp: 1990, expected: { cash: 10_000 + 1990 } });
+    expect(e.shiftInfo(s2.id)).toMatchObject({ salesCount: 1, salesTotalClp: 1980, expected: { cash: 20_000 + 1980 } });
+    expect(e.listSales({ shiftId: s2.id }).map((v) => v.cashierName)).toEqual(['Cajero 2']);
+    const closed = e.closeShift({ cash: 21_980 }, null, s2.id);
+    expect(closed).toMatchObject({ status: 'closed', salesCount: 1, difference: { cash: 0 } });
+    // La otra caja sigue abierta y operando; ahora es la única, así que ya no hace falta elegir.
+    expect(e.currentShift()?.id).toBe(s1.id);
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA, 1);
+    await payCart(e, g, { cartId: c.id, method: 'cash', receivedClp: 2000 });
+    expect(e.shiftInfo(s1.id)!.salesCount).toBe(2);
+  });
+
+  it('un carrito de una caja ya cerrada no se puede cobrar, pero se puede pasar a otra', async () => {
+    const { e, s1, s2 } = dos();
+    const c = e.createCart(B, 'physical', null, s2.id); e.cartAdd(c.id, COLA, 1);
+    e.closeShift({ cash: 20_000 }, null, s2.id);
+    expect(() => e.beginPayment(c.id, 'cash')).toThrow(/ya está cerrada/);
+    expect(() => e.assignCartShift(c.id, s2.id)).toThrow(/ya está cerrada/);
+    e.assignCartShift(c.id, s1.id);
+    await payCart(e, fast(), { cartId: c.id, method: 'cash', receivedClp: 2000 });
+    expect(e.shiftInfo(s1.id)!.salesCount).toBe(1);
+  });
+
+  it('el abono de un convenio y el consumo propio entran a la caja indicada', () => {
+    const { e, s2 } = dos();
+    expect(() => e.registerConsumption(e.createCart(B, 'physical').id)).toThrow(/vacío|elige en cuál/);
+    const k = e.createCart(B, 'physical', null, s2.id); e.cartAdd(k.id, COLA, 1);
+    expect(e.registerConsumption(k.id)).toMatchObject({ shiftId: s2.id, cashierName: 'Cajero 2' });
+    expect(() => e.payClientDebt('cli_seed_1', 100, 'cash')).toThrow(/elige en cuál/);
+  });
+
+  it('cerrar una caja no se bloquea por un cobro en curso de otra', async () => {
+    const { e, s1, s2 } = dos();
+    const a = e.createCart(B, 'physical', null, s1.id); e.cartAdd(a.id, COLA, 1);
+    e.beginPayment(a.id, 'debit'); // queda cobrando en la caja 1
+    expect(() => e.closeShift({ cash: 10_000 }, null, s1.id)).toThrow(/cobro en curso/);
+    expect(e.closeShift({ cash: 20_000 }, null, s2.id).status).toBe('closed');
+  });
+
+  it('volver a entrar a una caja pide el PIN de su cajero', () => {
+    const { e, s2 } = dos();
+    expect(e.verifyShiftPin(s2.id, '4321').id).toBe(s2.id);
+    expect(() => e.verifyShiftPin(s2.id, '1234')).toThrow(/PIN/);
+    e.closeShift({ cash: 20_000 }, null, s2.id);
+    expect(() => e.verifyShiftPin(s2.id, '4321')).toThrow(/cerrada/);
   });
 });
 
@@ -387,7 +463,7 @@ describe('compras a proveedores', () => {
     expect(card.openingQty).toBe(10);
     // la compra tiene fecha anterior a la venta, así que va antes aunque se registró después
     expect(card.rows.map((r) => [r.detail, r.entry, r.exit, r.balance])).toEqual([
-      ['Boleta N° 1', 0, 3, 27],
+      ['Venta N° 1', 0, 3, 27],
       ['Compra · Factura N° 4521 · Distribuidora Sur', 20, 0, 30],
     ]);
     expect(card.rows[1]).toMatchObject({ at: '2026-10-10T15:00:00.000Z', dateOnly: true, type: 'purchase' });
@@ -510,7 +586,7 @@ describe('precios y valores en la tarjeta de existencia', () => {
     const buy = (over: object) => () => e.registerPurchase({ ...base, docNumber: '2', lines: [{ productId: COLA, quantity: 1, unitCostClp: 1 }], ...over });
     expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 1, priceNetClp: -5 }] })).toThrow(/precio de venta neto/);
     expect(buy({ lines: [{ productId: COLA, quantity: 1, unitCostClp: 1, priceNetClp: 10.5 }] })).toThrow(/precio de venta neto/);
-    expect(buy({ lines: [{ newProduct: { name: 'Sin precio' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/precio de venta neto del producto nuevo/);
+    expect(buy({ lines: [{ newProduct: { name: 'Sin precio' }, quantity: 1, unitCostClp: 1 }] })).toThrow(/precio de venta del producto nuevo/);
   });
 
   it('con la inflación, cada movimiento guarda su precio, y entradas y salidas se valoran al costo', async () => {
@@ -519,7 +595,7 @@ describe('precios y valores en la tarjeta de existencia', () => {
     e.registerPurchase({ ...base, docNumber: '1', lines: [{ productId: COLA, quantity: 20, unitCostClp: 1000, priceNetClp: 1800 }] });
     await sell(e, COLA, 1, 3000); // ahora $2.142 (neto $1.800)
     const card = e.stockCard(B, COLA, 'physical');
-    const pick = (r: (typeof card.rows)[number]) => [r.detail.split(' ')[0] === 'Boleta' ? 'Venta' : r.detail.split(' ')[0], r.unitCostClp, r.unitPriceNetClp, r.unitPriceClp, r.entryValueClp, r.exitValueClp];
+    const pick = (r: (typeof card.rows)[number]) => [r.detail.split(' ')[0], r.unitCostClp, r.unitPriceNetClp, r.unitPriceClp, r.entryValueClp, r.exitValueClp];
     // el precio de venta de cada momento queda anotado (inflación), pero los valores son siempre al costo:
     // la 1.ª boleta saca 2 al costo de $1.294; la compra mete 20 a $1.000; la 2.ª saca 1 al promedio (10.352 + 20.000) ÷ 28 = $1.084
     expect(card.rows.map(pick)).toEqual([
@@ -697,10 +773,10 @@ describe('tarjeta de existencia', () => {
       ['Traspaso a Online', 0, 1, 9],
       ['Ajuste de inventario', 5, 0, 10],
       ['Consumo N° 1 · degustación', 0, 2, 5],
-      [`Boleta N° ${e.getSale(sale.saleId!).document!.folio}`, 0, 3, 7],
+      [`Venta N° ${e.getSale(sale.saleId!).number}`, 0, 3, 7],
     ]);
     expect(card).toMatchObject({ closingQty: 9, currentQty: 9, entries: 5, exits: 6 });
-    // solo las ventas apuntan a su boleta; consumo, ajuste y traspaso no
+    // solo las ventas apuntan a su comprobante; consumo, ajuste y traspaso no
     expect(card.rows.map((r) => r.saleId)).toEqual([undefined, undefined, undefined, sale.saleId]);
     expect(e.available(B, COLA, 'physical')).toBe(card.closingQty);
     expect(cons.id).toBeTruthy();
@@ -724,8 +800,8 @@ describe('tarjeta de existencia', () => {
     const num = e.getSale(p.saleId!).number;
     e.voidSale(p.saleId!);
     const card = e.stockCard(B, AGUA, 'physical');
-    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de boleta N° ${num}`, 40], [`Boleta N° ${num}`, 38]]); // folio = número de venta en esta demo
-    expect(card.rows.map((r) => r.saleId)).toEqual([p.saleId, p.saleId]); // la anulación también abre la boleta
+    expect(card.rows.map((r) => [r.detail, r.balance])).toEqual([[`Anulación de venta N° ${num}`, 40], [`Venta N° ${num}`, 38]]);
+    expect(card.rows.map((r) => r.saleId)).toEqual([p.saleId, p.saleId]); // la anulación también abre el comprobante
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
     expect(e.stockCard(B, AGUA, 'physical', hoy, hoy).rows).toHaveLength(2);
     const futuro = e.stockCard(B, AGUA, 'physical', '2999-01-01');
@@ -739,9 +815,8 @@ describe('consumo propio', () => {
   const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
   const COLA_COST = Math.round(1990 * 0.65);
 
-  it('descuenta el stock al costo, sin venta, boleta, folio ni ganancia', () => {
+  it('descuenta el stock al costo, sin venta, comprobante ni ganancia', () => {
     const e = make();
-    const folio = e.currentFolio();
     const c = e.createCart(B, 'physical');
     e.cartAdd(c.id, COLA, 2);
     e.setCustomer(c.id, { name: 'Dueño' });
@@ -751,7 +826,7 @@ describe('consumo propio', () => {
     expect(e.inventory(B).find((r) => r.product.id === COLA)!.physical).toEqual({ qty: 38, reserved: 0 });
     expect(e.movements(COLA, 1)[0]).toMatchObject({ delta: -2, reason: 'consumption', refId: k.id });
     expect(e.listSales()).toHaveLength(0);
-    expect(e.currentFolio()).toBe(folio);
+    expect(e.nextOrderNumber()).toBe(1); // un consumo no gasta número de venta
     expect(e.getCart(c.id).status).toBe('closed');
     expect(e.listConsumptions()).toHaveLength(1);
   });
@@ -838,7 +913,7 @@ describe('clientes y promociones', () => {
     expect(() => e.upsertClient({ name: 'X', rut: '12.345.678-9' })).toThrow(/RUT/);
     expect(() => e.upsertClient({ name: 'Y', rut: '11111111-1' })).toThrow(/RUT|existe/);
   });
-  it('aplica porcentaje y monto fijo, y la boleta lleva el descuento', async () => {
+  it('aplica porcentaje y monto fijo, y la venta guarda el descuento', async () => {
     const e = make();
     const c = e.createCart(B, 'physical');
     e.cartAdd(c.id, COLA, 2); // 3.980
@@ -847,8 +922,6 @@ describe('clientes y promociones', () => {
     const p = await payCart(e, fast(), { cartId: c.id, method: 'debit' });
     const sale = e.getSale(p.saleId!);
     expect(sale).toMatchObject({ discountClp: 500, promotionCode: 'MENOS500', totalClp: 3480 });
-    const parsed = parseBoletaXml(sale.document!.xml);
-    expect(parsed).toMatchObject({ mntTotal: 3480, discountClp: 500 });
     expect(sale.netClp + sale.ivaClp).toBe(3480);
   });
   it('rechaza códigos inválidos o vencidos y recalcula al quitar productos', () => {
@@ -941,17 +1014,7 @@ describe('anulaciones', () => {
   });
 });
 
-describe('boleta electrónica y reportes', () => {
-  it('genera XML de boleta 39 y se puede parsear de vuelta', () => {
-    const xml = buildBoletaXml({
-      folio: 7, date: '2026-10-19', emisor: DEFAULT_EMISOR, receptor: { rut: '11111111-1', name: 'Ana & Cía' },
-      lines: [{ productId: 'x', name: 'Té <verde>', unitPriceClp: 1190, costClp: 0, quantity: 2 }], totalClp: 2380,
-    });
-    const b = parseBoletaXml(xml);
-    expect(b).toMatchObject({ tipoDte: 39, folio: 7, mntTotal: 2380, mntNeto: 2000, iva: 380, discountClp: 0 });
-    expect(b.items[0]).toMatchObject({ name: 'Té <verde>', quantity: 2, amountClp: 2380 });
-  });
-
+describe('reportes', () => {
   it('reporte por rango: KPI, comparación, series y rankings', async () => {
     let now = new Date('2026-10-10T15:00:00Z'); // período anterior
     const e = make({}, { now: () => now });
@@ -984,8 +1047,6 @@ describe('boleta electrónica y reportes', () => {
     expect(r.byCategory.map((c) => c.category).sort()).toEqual(['Bebidas']);
     expect(r.topProducts[0]).toMatchObject({ name: 'Agua mineral 1,5 L', units: 3 });
     expect(r.promotions).toEqual([{ code: 'NEXUS5', name: 'NEXUS5', uses: 1, discountClp: 199 }]);
-    expect(r.kpis.folioFrom).toBe(2);
-    expect(r.kpis.folioTo).toBe(3);
     const wide = e.salesReport('2026-10-10', '2026-10-19');
     expect(wide.kpis.count).toBe(3);
     const compare = e.salesReport('2026-10-20', '2026-10-24');
@@ -994,15 +1055,96 @@ describe('boleta electrónica y reportes', () => {
     expect(e.salesReport('2026-10-01', '2026-10-05').deltas.count).toBeNull(); // sin base de comparación
   });
 
-  it('lista ventas con folio y filtra por jornada y fechas', async () => {
+  it('lista ventas y filtra por jornada y fechas', async () => {
     const e = make({}, { now: () => new Date('2026-10-19T15:00:00Z') });
     const c = e.createCart(B, 'physical');
     e.cartAdd(c.id, COLA, 1);
     await payCart(e, fast(), { cartId: c.id, method: 'cash' });
     const shiftId = e.currentShift()!.id;
-    expect(e.listSales({ shiftId })[0]).toMatchObject({ number: 1, folio: 1 });
+    expect(e.listSales({ shiftId })[0]).toMatchObject({ number: 1 });
     expect(e.listSales({ from: '2026-10-20' })).toHaveLength(0);
     expect(e.listSales({ from: '2026-10-19', to: '2026-10-19' })).toHaveLength(1);
+  });
+});
+
+describe('negocio nuevo y ingreso por escaneo', () => {
+  const fresh = () => new PosEngine(emptyState({ name: 'Almacén Don Pepe' }));
+
+  it('un negocio nuevo parte en cero: sin productos, stock, clientes, promociones ni cajeros', () => {
+    const e = fresh();
+    expect(e.catalog(B, 'physical')).toEqual([]);
+    expect(e.listProducts()).toEqual([]);
+    expect(e.listClients()).toEqual([]);
+    expect(e.listPromotions()).toEqual([]);
+    expect(e.listCashiers()).toEqual([]);
+    expect(e.listSales()).toEqual([]);
+    expect(e.currentShift()).toBeNull();
+    expect(e.getBusiness().name).toBe('Almacén Don Pepe');
+  });
+
+  it('guarda los datos del negocio y valida el RUT', () => {
+    const e = fresh();
+    expect(e.updateBusiness({ name: ' Don Pepe ', rut: '12.345.678-5', giro: 'Abarrotes' })).toMatchObject({ name: 'Don Pepe', rut: '12345678-5', giro: 'Abarrotes' });
+    expect(() => e.updateBusiness({ name: 'X', rut: '12.345.678-9' })).toThrow(/RUT/);
+    expect(() => e.updateBusiness({ name: '  ' })).toThrow(/nombre/);
+  });
+
+  it('el primer cajero se crea y puede abrir jornada', () => {
+    const e = fresh();
+    const c = e.upsertCashier({ name: 'Pepe', pin: '4321' });
+    expect(e.openShift(c.id, '4321', 0).status).toBe('open');
+  });
+
+  it('escanear un código nuevo crea el producto con costo y precio neto, y suma el stock', () => {
+    const e = fresh();
+    const r = e.receiveStock(B, { barcode: '7801234567890', name: 'Coca Cola 1,5 L', category: 'Bebidas', costClp: 1000, priceNetClp: 1500, quantity: 12 });
+    expect(r).toMatchObject({ created: true, qty: 12 });
+    expect(r.product).toMatchObject({ name: 'Coca Cola 1,5 L', costClp: 1000, priceClp: addIva(1500) });
+    expect(e.available(B, r.product.id, 'physical')).toBe(12);
+    expect(e.findProduct('7801234567890')?.id).toBe(r.product.id);
+    expect(e.findProduct('no-existe')).toBeNull();
+  });
+
+  it('escanear uno existente suma stock, promedia el costo y registra el cambio de precio', () => {
+    const e = fresh();
+    const a = e.receiveStock(B, { barcode: '111', name: 'Arroz', costClp: 1000, priceNetClp: 1500, quantity: 10 });
+    const b = e.receiveStock(B, { barcode: '111', quantity: 10, costClp: 1200, priceNetClp: 1600 });
+    expect(b).toMatchObject({ created: false, qty: 20 });
+    expect(b.product.costClp).toBe(1100); // (10×1000 + 10×1200) / 20
+    expect(b.product.priceClp).toBe(addIva(1600));
+    const card = e.stockCard(B, a.product.id);
+    expect(card.rows.map((r) => r.detail)).toEqual(expect.arrayContaining(['Ingreso de inventario']));
+    expect(card.currentQty).toBe(20);
+  });
+
+  it('sumar de a uno sin datos no cambia costo ni precio', () => {
+    const e = fresh();
+    e.receiveStock(B, { barcode: '222', name: 'Fideos', costClp: 800, priceNetClp: 1200, quantity: 5 });
+    const r = e.receiveStock(B, { barcode: '222' });
+    expect(r.qty).toBe(6);
+    expect(r.product).toMatchObject({ costClp: 800, priceClp: addIva(1200) });
+  });
+
+  it('valida los datos del ingreso', () => {
+    const e = fresh();
+    expect(() => e.receiveStock(B, { barcode: '  ' })).toThrow(/código/);
+    expect(() => e.receiveStock(B, { barcode: '333' })).toThrow(/nombre/);
+    expect(() => e.receiveStock(B, { barcode: '333', name: 'X' })).toThrow(/precio/);
+    expect(() => e.receiveStock(B, { barcode: '333', name: 'X', priceNetClp: 100, quantity: 0 })).toThrow(/cantidad/i);
+    expect(() => e.receiveStock(B, { barcode: '333', name: 'X', priceNetClp: -1 })).toThrow(/precio/);
+    expect(() => e.receiveStock('otra', { barcode: '333', name: 'X', priceNetClp: 100 })).toThrow(/Sucursal/);
+  });
+
+  it('lo ingresado se puede vender y el stock baja', async () => {
+    const e = fresh();
+    const cashier = e.upsertCashier({ name: 'Pepe', pin: '1234' });
+    e.openShift(cashier.id, '1234', 0);
+    const { product } = e.receiveStock(B, { barcode: '444', name: 'Pan', costClp: 500, priceNetClp: 840, quantity: 3 });
+    const cart = e.createCart(B, 'physical');
+    e.cartAdd(cart.id, '444', 2);
+    const p = await payCart(e, fast(), { cartId: cart.id, method: 'cash' });
+    expect(p.status).toBe('approved');
+    expect(e.available(B, product.id, 'physical')).toBe(1);
   });
 });
 
@@ -1010,5 +1152,202 @@ describe('API remota (RPC)', () => {
   it('todos los métodos publicados existen en el motor', () => {
     const e = make();
     for (const m of RPC_METHODS) expect(typeof (e as unknown as Record<string, unknown>)[m], m).toBe('function');
+  });
+});
+
+describe('tienda web pública', () => {
+  const cliente = { customerName: 'Ana Pérez', phone: '+56 9 1234 5678' };
+
+  it('el catálogo público no expone costos ni códigos internos y usa el stock online', () => {
+    const e = make();
+    const cat = e.publicCatalog();
+    expect(cat.length).toBeGreaterThan(0);
+    for (const p of cat) {
+      expect(Object.keys(p).sort()).toEqual(['available', 'category', 'id', 'name', 'priceClp']);
+      expect(p.available).toBe(e.available(B, p.id, 'online'));
+    }
+  });
+
+  it('un pedido web reserva el stock online y queda abierto sin pagar', () => {
+    const e = make();
+    const antes = e.available(B, COLA, 'online');
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 2 }] });
+    expect(t.channel).toBe('web');
+    expect(t.paid).toBe(false);
+    expect(t.totalClp).toBe(1990 * 2);
+    expect(e.available(B, COLA, 'online')).toBe(antes - 2);
+    expect(e.publicCatalog().find((p) => p.id === COLA)!.available).toBe(antes - 2);
+  });
+
+  it('es todo o nada: si un producto no alcanza no queda nada reservado', () => {
+    const e = make();
+    const cola = e.available(B, COLA, 'online');
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }, { productId: AGUA, quantity: 9999 }] }))
+      .toThrow(PosError);
+    expect(e.available(B, COLA, 'online')).toBe(cola);
+    expect(e.listTickets()).toHaveLength(0);
+  });
+
+  it('valida los datos del cliente y las cantidades', () => {
+    const e = make();
+    const items = [{ productId: COLA, quantity: 1 }];
+    expect(() => e.placeWebOrder({ ...cliente, customerName: ' ', items })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, phone: '12', items })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, email: 'malo', items })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [] })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: -1 }] })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1.5 }] })).toThrow(PosError);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: 'no_existe', quantity: 1 }] })).toThrow(PosError);
+  });
+
+  it('los pedidos web sin pagar vencen y devuelven el stock', () => {
+    let hoy = new Date('2026-03-10T12:00:00Z');
+    const e = make({}, { now: () => hoy });
+    const antes = e.available(B, COLA, 'online');
+    e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 3 }] });
+    hoy = new Date('2026-03-10T20:00:00Z');
+    expect(e.expireWebOrders()).toBe(0);
+    hoy = new Date('2026-03-11T13:00:00Z');
+    expect(e.expireWebOrders()).toBe(1);
+    expect(e.available(B, COLA, 'online')).toBe(antes);
+    expect(e.listTickets()).toHaveLength(0);
+  });
+
+  it('el cajero puede cancelar un pedido web y se libera el stock', () => {
+    const e = make();
+    const antes = e.available(B, COLA, 'online');
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] });
+    e.cancelTicket(t.id);
+    expect(e.available(B, COLA, 'online')).toBe(antes);
+  });
+
+  it('el cajero cobra un pedido web en efectivo, sin correo, y se descuenta el stock online', async () => {
+    const e = make();
+    const antes = e.available(B, COLA, 'online');
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 2 }] });
+    const cart = e.resumeTicket(t.id);
+    const paid = await payCart(e, fast(), { cartId: cart.id, method: 'cash', receivedClp: 5000 });
+    expect(paid.status).toBe('approved');
+    expect(e.available(B, COLA, 'online')).toBe(antes - 2);
+  });
+
+  it('sin jornada abierta no se cobra un pedido web en caja', () => {
+    const e = make({}, {}, false);
+    const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] });
+    const cart = e.resumeTicket(t.id);
+    expect(() => e.beginPayment(cart.id, 'cash', null, null, 5000)).toThrow(PosError);
+  });
+});
+
+describe('tope de convenio', () => {
+  const g = fast();
+  async function ventaConvenio(e: PosEngine, clientId: string, productId: string, qty = 1) {
+    const c = e.createCart(B, 'physical');
+    e.cartAdd(c.id, productId, qty);
+    e.setCustomer(c.id, { clientId });
+    return { cart: c, run: () => payCart(e, g, { cartId: c.id, method: 'convenio' }) };
+  }
+
+  it('sin tope el cliente no tiene límite (compatibilidad con clientes anteriores)', async () => {
+    const e = make();
+    const cli = e.listClients().find((c) => c.id === 'cli_seed_1')!;
+    expect(cli.creditLimitClp).toBeUndefined();
+    expect(cli.availableCreditClp).toBeNull();
+    const { run } = await ventaConvenio(e, 'cli_seed_1', COLA, 3);
+    expect((await run()).status).toBe('approved');
+  });
+
+  it('guarda el tope, lo valida y no lo borra al editar sin enviarlo', () => {
+    const e = make();
+    const base = { id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true };
+    expect(e.upsertClient({ ...base, creditLimitClp: 5000 }).creditLimitClp).toBe(5000);
+    expect(e.upsertClient({ ...base, phone: '+56911112222' }).creditLimitClp).toBe(5000);
+    expect(() => e.upsertClient({ ...base, creditLimitClp: -1 })).toThrow(PosError);
+    expect(() => e.upsertClient({ ...base, creditLimitClp: 10.5 })).toThrow(PosError);
+    expect(e.upsertClient({ ...base, creditLimitClp: null }).creditLimitClp).toBeUndefined();
+  });
+
+  it('no deja vender a convenio más de lo que alcanza el cupo y dice cuánto le queda', async () => {
+    const e = make();
+    e.upsertClient({ id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true, creditLimitClp: 3000 });
+    const ok = await ventaConvenio(e, 'cli_seed_1', COLA); // $1.990
+    expect((await ok.run()).status).toBe('approved');
+    expect(e.clientBalance('cli_seed_1')).toMatchObject({ debtClp: 1990, creditLimitClp: 3000, availableCreditClp: 1010 });
+    const otra = await ventaConvenio(e, 'cli_seed_1', COLA);
+    expect(() => e.beginPayment(otra.cart.id, 'convenio')).toThrow(/solo tiene \$1\.010 de cupo/);
+    const agua = await ventaConvenio(e, 'cli_seed_1', AGUA); // $990 cabe
+    expect((await agua.run()).status).toBe('approved');
+    expect(e.clientBalance('cli_seed_1').availableCreditClp).toBe(20);
+  });
+
+  it('con el cupo agotado avisa que no tiene cupo, y un abono lo libera', async () => {
+    const e = make();
+    e.upsertClient({ id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true, creditLimitClp: 1990 });
+    expect((await (await ventaConvenio(e, 'cli_seed_1', COLA)).run()).status).toBe('approved');
+    const sin = await ventaConvenio(e, 'cli_seed_1', AGUA);
+    expect(() => e.beginPayment(sin.cart.id, 'convenio')).toThrow(/no tiene cupo/);
+    e.payClientDebt('cli_seed_1', 1990, 'cash');
+    expect(e.clientBalance('cli_seed_1').availableCreditClp).toBe(1990);
+    expect((await sin.run()).status).toBe('approved');
+  });
+
+  it('si el cupo se usa mientras otro cobro esperaba, ese cobro se rechaza al cerrar', () => {
+    const e = make();
+    e.upsertClient({ id: 'cli_seed_1', name: 'María Pérez', rut: '12345678-5', creditAuthorized: true, creditLimitClp: 2000 });
+    const a = e.createCart(B, 'physical'); e.cartAdd(a.id, COLA); e.setCustomer(a.id, { clientId: 'cli_seed_1' });
+    const b = e.createCart(B, 'physical'); e.cartAdd(b.id, COLA); e.setCustomer(b.id, { clientId: 'cli_seed_1' });
+    const pa = e.beginPayment(a.id, 'convenio').payment;
+    const pb = e.beginPayment(b.id, 'convenio').payment; // ambas caben mientras ninguna se cierra
+    expect(e.resolvePayment(pa.id, { approved: true }).status).toBe('approved');
+    const second = e.resolvePayment(pb.id, { approved: true });
+    expect(second.status).toBe('rejected');
+    expect(second.message).toMatch(/solo tiene \$10 de cupo/);
+    expect(e.clientBalance('cli_seed_1').debtClp).toBe(1990);
+  });
+});
+
+describe('precios con IVA al ingresar y al comprar', () => {
+  it('el ingreso por escaneo acepta el precio de venta con IVA (exacto, sin pasar por el neto)', () => {
+    const e = make();
+    const r = e.receiveStock(B, { barcode: '7809999', name: 'Galletas', priceClp: 1990, costClp: 1000, quantity: 3 });
+    expect(r.created).toBe(true);
+    expect(r.product.priceClp).toBe(1990);
+    const again = e.receiveStock(B, { barcode: '7809999', priceClp: 2190 });
+    expect(again.product.priceClp).toBe(2190);
+  });
+
+  it('el precio con IVA manda sobre el neto si vienen los dos, y el neto sigue funcionando', () => {
+    const e = make();
+    expect(e.receiveStock(B, { barcode: '7801', name: 'A', priceClp: 1500, priceNetClp: 100 }).product.priceClp).toBe(1500);
+    expect(e.receiveStock(B, { barcode: '7802', name: 'B', priceNetClp: 1000 }).product.priceClp).toBe(1190);
+    expect(() => e.receiveStock(B, { barcode: '7803', name: 'C', priceClp: -5 })).toThrow(PosError);
+    expect(() => e.receiveStock(B, { barcode: '7804', name: 'D' })).toThrow(/precio de venta/);
+  });
+
+  it('una compra puede subir el precio de un producto existente con el valor con IVA', () => {
+    const e = make();
+    e.registerPurchase({
+      branchId: B, supplierName: 'Proveedor', docType: 'factura', docNumber: '1', docDate: '2026-03-01',
+      lines: [{ productId: COLA, quantity: 2, unitCostClp: 1000, priceClp: 2490 }],
+    });
+    expect(e.listProducts().find((p) => p.id === COLA)!.priceClp).toBe(2490);
+  });
+
+  it('el costo con IVA se convierte a neto de forma estable (ida y vuelta sin perder pesos)', () => {
+    for (const net of [1, 840, 1000, 1672, 8403, 99999]) expect(splitIva(addIva(net)).netClp).toBe(net);
+  });
+});
+
+describe('corregir el precio de venta con IVA', () => {
+  it('setProductSalePrice fija el precio con IVA exacto, lo anota y no cambia ventas ya hechas', async () => {
+    const e = make();
+    const c = e.createCart(B, 'physical'); e.cartAdd(c.id, COLA);
+    await payCart(e, fast(), { cartId: c.id, method: 'cash', receivedClp: 5000 });
+    const p = e.setProductSalePrice(COLA, 2300, 'sube proveedor');
+    expect(p.priceClp).toBe(2300);
+    expect(e.listSales()[0]!.totalClp).toBe(1990);
+    expect(() => e.setProductSalePrice(COLA, 2300)).toThrow(/ya es ese/);
+    expect(() => e.setProductSalePrice(COLA, -1)).toThrow(PosError);
+    expect(() => e.setProductSalePrice('nope', 100)).toThrow(PosError);
   });
 });

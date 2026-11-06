@@ -9,22 +9,21 @@ type View = Channel | 'all';
 const VIEWS: [View, string][] = [['all', 'Total'], ['physical', 'Caja'], ['online', 'Online']];
 
 /**
- * Corrige o sube el precio de venta de un producto digitando el neto. Rige desde ahora: las ventas ya hechas
- * conservan el precio al que se vendieron.
+ * Corrige o sube el precio de venta de un producto digitando el precio con IVA (el que ve el cliente). Rige desde
+ * ahora: las ventas ya hechas conservan el precio al que se vendieron.
  */
 export function PriceModal({ api, product, onClose, onSaved }: { api: PosApi; product: Product; onClose: () => void; onSaved: () => void }) {
-  const currentNet = splitIva(product.priceClp).netClp;
-  const [net, setNet] = useState(String(currentNet));
+  const [price, setPrice] = useState(String(product.priceClp));
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const value = Number(net.replace(/\D/g, '')) || 0;
-  const gross = addIva(value);
+  const value = Number(price.replace(/\D/g, '')) || 0;
+  const costWithIva = addIva(product.costClp);
 
   const save = async () => {
     try {
       setBusy(true); setError(null);
-      await api.rpc.setProductPrice(product.id, value, reason);
+      await api.rpc.setProductSalePrice(product.id, value, reason);
       onSaved();
       onClose();
     } catch (e) { setError(msg(e)); } finally { setBusy(false); }
@@ -34,22 +33,21 @@ export function PriceModal({ api, product, onClose, onSaved }: { api: PosApi; pr
     <Modal title={`✏️ Editar precio · ${product.name}`} onClose={onClose}>
       <p className="hint">Rige desde ahora. Las ventas ya hechas <b>no cambian</b>: conservan el precio al que se vendieron.</p>
       <div className="receipt">
-        <div><span>Precio actual neto</span><strong>{formatClp(currentNet)}</strong></div>
-        <div><span>Con IVA</span><span>{formatClp(product.priceClp)}</span></div>
-        <div><span>Costo unitario</span><span>{formatClp(product.costClp)}</span></div>
+        <div><span>Precio de venta actual (con IVA)</span><strong>{formatClp(product.priceClp)}</strong></div>
+        <div><span>Costo unitario (con IVA)</span><span>{formatClp(costWithIva)}</span></div>
       </div>
-      <label className="field">Nuevo precio de venta neto unitario
-        <input inputMode="numeric" autoFocus value={net} onChange={(e) => setNet(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
+      <label className="field">Nuevo precio de venta (con IVA)
+        <input inputMode="numeric" autoFocus value={price} onChange={(e) => setPrice(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
       </label>
-      <div className="receipt"><div className="big"><span>Nuevo precio con IVA</span><strong>{formatClp(gross)}</strong></div></div>
-      {value < product.costClp && <div className="alert" role="alert">El precio neto queda bajo el costo ({formatClp(product.costClp)}): venderías con pérdida.</div>}
+      <div className="receipt"><div className="big"><span>Neto del nuevo precio</span><strong>{formatClp(splitIva(value).netClp)}</strong></div></div>
+      {value < costWithIva && <div className="alert" role="alert">El precio queda bajo el costo ({formatClp(costWithIva)} con IVA): venderías con pérdida.</div>}
       <label className="field">Motivo (opcional)
         <input placeholder="Ej: error al digitar la compra" value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && save()} />
       </label>
       {error && <div className="alert" role="alert">{error}</div>}
       <div className="row-btns">
         <button className="btn ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn primary" disabled={busy || gross === product.priceClp} onClick={save}>Guardar precio</button>
+        <button className="btn primary" disabled={busy || value === product.priceClp} onClick={save}>Guardar precio</button>
       </div>
     </Modal>
   );
@@ -88,7 +86,7 @@ function Ledger({ card, from, showChannel, onOpenSale }: { card: StockCard; from
             <tr key={r.id} className={r.type === 'price' ? 'price-row' : ''}>
               <td>{fmtDate(r.at)}</td>
               <td>
-                {r.saleId ? <button className="link-btn" title="Ver y reimprimir la boleta" onClick={() => onOpenSale(r.saleId!)}>{r.detail}</button> : r.detail}
+                {r.saleId ? <button className="link-btn" title="Ver y reimprimir el comprobante" onClick={() => onOpenSale(r.saleId!)}>{r.detail}</button> : r.detail}
                 {(r.type === 'sale' || r.type === 'purchase') && <small>Precio de venta {formatClp(r.unitPriceNetClp)} neto · {formatClp(r.unitPriceClp)} c/IVA</small>}
                 {showChannel && r.channel === 'online' && <small>Online</small>}
               </td>
@@ -139,15 +137,15 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
     return <PriceModal api={api} product={card.product} onClose={() => setEditingPrice(false)} onSaved={() => { setVersion((v) => v + 1); onChanged?.(); }} />;
   }
 
-  // La boleta se muestra en lugar de la tarjeta; al cerrarla se vuelve a la tarjeta con sus filtros.
+  // El comprobante se muestra en lugar de la tarjeta; al cerrarlo se vuelve a la tarjeta con sus filtros.
   if (sale) {
     return (
-      <Modal title={`Boleta N° ${sale.document?.folio ?? '—'} · Venta #${sale.number}`} wide onClose={() => setSale(null)}>
+      <Modal title={`Comprobante de venta interno · Pedido #${sale.number}`} wide onClose={() => setSale(null)}>
         <Receipt sale={sale} />
         <ul className="items">{sale.lines.map((l) => <li key={l.productId}>{l.quantity} × {l.name} <b>{formatClp(l.unitPriceClp * l.quantity)}</b></li>)}</ul>
         {sale.status === 'voided' && <div className="alert">Venta anulada{sale.voidReason ? `: ${sale.voidReason}` : ''}.</div>}
         <div className="row-btns">
-          <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Reimprimir boleta</button>
+          <button className="btn ghost" onClick={() => printReceipt(sale)}>🖨 Reimprimir comprobante</button>
           <button className="btn primary" onClick={() => setSale(null)}>Volver a la tarjeta</button>
         </div>
       </Modal>
@@ -177,8 +175,8 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
         {card && (
           <div className="stock-stats">
             <div className="stock-stat"><span>Existencia actual</span><strong>{card.currentQty}</strong>{card.reservedQty > 0 && <small>{card.reservedQty} reservada(s)</small>}</div>
-            <div className="stock-stat"><span>Costo unitario</span><strong>{formatClp(card.product.costClp)}</strong></div>
-            <div className="stock-stat"><span>Precio neto de venta</span><strong>{formatClp(splitIva(card.product.priceClp).netClp)}</strong><small>{formatClp(card.product.priceClp)} con IVA</small></div>
+            <div className="stock-stat"><span>Costo unitario</span><strong>{formatClp(addIva(card.product.costClp))}</strong><small>con IVA · neto {formatClp(card.product.costClp)}</small></div>
+            <div className="stock-stat"><span>Precio de venta</span><strong>{formatClp(card.product.priceClp)}</strong><small>con IVA · neto {formatClp(splitIva(card.product.priceClp).netClp)}</small></div>
             <button className="btn ghost sm" onClick={() => setEditingPrice(true)}>✏️ Editar precio</button>
           </div>
         )}
@@ -190,7 +188,7 @@ export function StockCardModal({ api, branchId, product, onClose, onChanged }: {
           <details className="stock-help">
             <summary>ℹ️ Cómo se calcula</summary>
             <p>
-              En orden cronológico: el saldo corre hacia abajo. Los valores van todos al costo: las entradas, al costo de esa entrada (el inventario inicial, al costo que había antes del primer movimiento), y las salidas, al costo promedio del saldo en ese momento. Por eso el saldo en valores es lo que queda en bodega y llega a $0 cuando las unidades llegan a 0. El precio de venta de cada boleta se muestra debajo del detalle.
+              En orden cronológico: el saldo corre hacia abajo. Los valores van todos al costo: las entradas, al costo de esa entrada (el inventario inicial, al costo que había antes del primer movimiento), y las salidas, al costo promedio del saldo en ese momento. Por eso el saldo en valores es lo que queda en bodega y llega a $0 cuando las unidades llegan a 0. El precio de venta de cada venta se muestra debajo del detalle.
               {showChannel && ' En la vista Total no aparecen los traspasos entre caja y online, porque no cambian la existencia total.'}
             </p>
           </details>
