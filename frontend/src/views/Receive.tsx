@@ -3,6 +3,7 @@ import { addIva, formatClp, splitIva, type Product } from '@nexus/core';
 import type { PosApi } from '../api';
 import { fmtTime } from '../format';
 import { msg } from '../hooks';
+import { CameraScanner } from '../CameraScanner';
 
 interface Draft {
   barcode: string;
@@ -32,25 +33,30 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
   const [categories, setCategories] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cam, setCam] = useState(false);
+  const [more, setMore] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const loadCategories = useCallback(async () => {
     setCategories([...new Set((await api.rpc.listProducts()).map((p) => p.category))].sort());
   }, [api]);
   useEffect(() => { loadCategories().catch(() => undefined); }, [loadCategories]);
-  useEffect(() => { if (!draft) inputRef.current?.focus(); }, [draft]);
+  useEffect(() => { if (!draft && !cam) inputRef.current?.focus(); }, [draft, cam]);
 
   const record = (name: string, qty: number, stock: number, created: boolean) =>
     setLog((l) => [{ at: new Date().toISOString(), name, qty, stock, created }, ...l].slice(0, 20));
 
-  const scan = async () => {
-    const barcode = code.trim();
+  /** `fromCamera`: con la cámara un producto que ya existe pide solo la cantidad (no suma 1 en silencio). */
+  const scan = async (scanned?: string) => {
+    const fromCamera = typeof scanned === 'string';
+    const barcode = (fromCamera ? scanned : code).trim();
     if (!barcode || !branchId) return;
     setError(null);
     setCode('');
+    setMore(false);
     try {
       const existing = await api.rpc.findProduct(barcode);
-      if (existing && quick) {
+      if (existing && quick && !fromCamera) {
         const r = await api.rpc.receiveStock(branchId, { barcode, quantity: 1 });
         record(r.product.name, 1, r.qty, false);
         return;
@@ -93,6 +99,10 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
       <p className="hint">Escanea o escribe el código de barras y presiona Enter. Si el producto no existe, lo creas con su costo y precio; si ya existe, suma stock.</p>
 
       <div className="scan-bar">
+        <button type="button" className={`btn ${cam ? 'ghost' : 'primary'} cam-btn`} onClick={() => setCam((v) => !v)}>
+          {cam ? 'Cerrar cámara' : '📷 Escanear con la cámara'}
+        </button>
+        {cam && <CameraScanner paused={!!draft} onCode={(c) => { scan(c); }} />}
         <input ref={inputRef} className="search barcode" placeholder="Escanea el código de barras…" inputMode="numeric" value={code} disabled={!!draft}
           onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && scan()} aria-label="Código de barras" />
         <label className="check"><input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} /> Sumar 1 unidad al escanear un producto que ya existe</label>
@@ -111,16 +121,22 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
                 <datalist id="categorias">{categories.map((c) => <option key={c} value={c} />)}</datalist>
               </label>
             )}
-            <label className="field">Cantidad *<input inputMode="numeric" autoFocus={!!draft.existing} value={draft.qty} onChange={(e) => setDraft({ ...draft, qty: e.target.value })} /></label>
-            <label className="field">Costo unitario (con IVA)
-              <input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value })} />
-              {num(draft.cost) !== undefined && <small>Neto: <b>{formatClp(splitIva(num(draft.cost)!).netClp)}</b></small>}
-            </label>
-            <label className="field">Precio de venta (con IVA){!draft.existing && ' *'}
-              <input inputMode="numeric" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })}
-                onKeyDown={(e) => e.key === 'Enter' && save()} />
-              {num(draft.price) !== undefined && <small>Neto: <b>{formatClp(splitIva(num(draft.price)!).netClp)}</b></small>}
-            </label>
+            <label className="field">Cantidad *<input inputMode="numeric" autoFocus={!!draft.existing} value={draft.qty} onChange={(e) => setDraft({ ...draft, qty: e.target.value })}
+              onKeyDown={(e) => e.key === 'Enter' && draft.existing && !more && save()} /></label>
+            {(!draft.existing || more) && <>
+              <label className="field">Costo unitario (con IVA)
+                <input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value })} />
+                {num(draft.cost) !== undefined && <small>Neto: <b>{formatClp(splitIva(num(draft.cost)!).netClp)}</b></small>}
+              </label>
+              <label className="field">Precio de venta (con IVA){!draft.existing && ' *'}
+                <input inputMode="numeric" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })}
+                  onKeyDown={(e) => e.key === 'Enter' && save()} />
+                {num(draft.price) !== undefined && <small>Neto: <b>{formatClp(splitIva(num(draft.price)!).netClp)}</b></small>}
+              </label>
+            </>}
+            {draft.existing && !more && (
+              <button type="button" className="btn ghost" onClick={() => setMore(true)}>Cambiar costo o precio</button>
+            )}
             {!draft.existing && <label className="check"><input type="checkbox" checked={draft.published} onChange={(e) => setDraft({ ...draft, published: e.target.checked })} /> Visible en la tienda online</label>}
           </div>
           {belowCost && <div className="alert" role="alert">El precio de venta queda bajo el costo: venderías con pérdida.</div>}

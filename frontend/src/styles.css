@@ -291,3 +291,13 @@ div.ok { background: var(--ok); } div.bad { background: var(--bad); }
 .created { border-color: var(--ok); }
 .created code { font-size: 1.05rem; user-select: all; }
 a.link { color: var(--muted); text-decoration: underline; font-size: 13px; text-align: center; }
+
+/* Escáner con cámara (ingreso de inventario desde el celular) */
+.cam-btn { width: 100%; padding: 14px; font-size: 1.05rem; }
+.cam-box { position: relative; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; background: #000; border-radius: var(--radius); overflow: hidden; }
+.cam-video { width: 100%; height: 100%; object-fit: cover; }
+.cam-guide { position: absolute; left: 10%; right: 10%; top: 35%; bottom: 35%; border: 2px solid rgba(255, 255, 255, .85); border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; }
+@media (max-width: 600px) {
+  .inline-form .btn, .row-btns .btn { min-height: 46px; }
+  .inline-form input { font-size: 1.1rem; }
+}
