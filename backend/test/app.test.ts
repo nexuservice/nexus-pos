@@ -116,7 +116,7 @@ describe('inicio de sesión', () => {
     expect(a.body.business).toEqual({ name: 'Almacén Don Pepe', rut: '12345678-5', webStore: false, slug: null });
     expect((await call('POST', '/api/auth/login', { body: { rut: '123456785', password: PEPE.password } })).status).toBe(200);
     const me = await call('GET', '/api/auth/me', { token: a.body.token });
-    expect(me.body).toEqual({ name: 'Almacén Don Pepe', rut: '12345678-5', webStore: false, slug: null });
+    expect(me.body).toMatchObject({ name: 'Almacén Don Pepe', rut: '12345678-5', webStore: false, slug: null, terms: { required: false, accepted: false } });
   });
 
   it('da el mismo error si el RUT no existe o la clave es mala (no delata cuentas)', async () => {
@@ -248,7 +248,7 @@ describe('tienda web pública', () => {
   it('un pedido reserva stock, aparece en Pedidos del negocio y el precio lo pone el servidor', async () => {
     const { token, productId } = await conTienda();
     const o = await call('POST', '/api/public/almacen-don-pepe/orders', {
-      body: { items: [{ productId, quantity: 2, unitPriceClp: 1 }], customerName: 'Ana', phone: '+56 9 8765 4321' },
+      body: { items: [{ productId, quantity: 2, unitPriceClp: 1 }], customerName: 'Ana', phone: '+56 9 8765 4321', privacyAccepted: true },
     });
     expect(o.status).toBe(201);
     expect(o.body.totalClp).toBe(2380);
@@ -256,8 +256,17 @@ describe('tienda web pública', () => {
     const tickets = (await rpc(token, 'listTickets')).body;
     expect(tickets).toHaveLength(1);
     expect(tickets[0]).toMatchObject({ channel: 'web', paid: false, customerName: 'Ana' });
-    const sobra = await call('POST', '/api/public/almacen-don-pepe/orders', { body: { items: [{ productId, quantity: 4 }], customerName: 'Beto', phone: '+56 9 8765 4321' } });
+    const sobra = await call('POST', '/api/public/almacen-don-pepe/orders', { body: { items: [{ productId, quantity: 4 }], customerName: 'Beto', phone: '+56 9 8765 4321', privacyAccepted: true } });
     expect(sobra.status).toBe(409);
+  });
+
+  it('el pedido exige aceptar el aviso de privacidad', async () => {
+    const { productId } = await conTienda();
+    const sin = await call('POST', '/api/public/almacen-don-pepe/orders', { body: { items: [{ productId, quantity: 1 }], customerName: 'Ana', phone: '+56 9 8765 4321' } });
+    expect(sin.status).toBe(409);
+    expect(sin.body.message).toMatch(/aviso de privacidad/);
+    const ok = await call('POST', '/api/public/almacen-don-pepe/orders', { body: { items: [{ productId, quantity: 1 }], customerName: 'Ana', phone: '+56 9 8765 4321', privacyAccepted: true } });
+    expect(ok.status).toBe(201);
   });
 
   it('el público no puede usar el motor ni ver otra tienda', async () => {
@@ -279,5 +288,39 @@ describe('tienda web pública', () => {
     const { token } = await conTienda('pepe');
     const me = await call('GET', '/api/auth/me', { token });
     expect(me.body).toMatchObject({ webStore: true, slug: 'pepe' });
+  });
+});
+
+describe('aceptación de términos', () => {
+  async function conServidorQueExige() {
+    await stop();
+    manager = new TenantManager(new FileTenantStorage(dir));
+    const app = createApp({ manager, secret: SECRET, adminKey: ADMIN, gateway: new SimulatedGateway({ delayMs: 0 }), requireTerms: true });
+    server = http.createServer(app).listen(0);
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }
+
+  it('por defecto no se exige y el estado lo informa', async () => {
+    await createTenant(PEPE);
+    const token = await login(PEPE);
+    const me = await call('GET', '/api/auth/me', { token });
+    expect(me.body.terms).toMatchObject({ required: false, accepted: false });
+    expect(me.body.terms.version).toMatch(/^\d{4}-\d{2}$/);
+  });
+
+  it('si se exige, queda pendiente hasta aceptar la versión vigente, y se guarda con fecha', async () => {
+    await createTenant(PEPE);
+    await conServidorQueExige();
+    const token = await login(PEPE);
+    const antes = (await call('GET', '/api/auth/me', { token })).body.terms;
+    expect(antes).toMatchObject({ required: true, accepted: false });
+    expect((await call('POST', '/api/auth/accept-terms', { token, body: { version: 'vieja' } })).status).toBe(409);
+    expect((await call('POST', '/api/auth/accept-terms', { body: { version: antes.version } })).status).toBe(401);
+    const ok = await call('POST', '/api/auth/accept-terms', { token, body: { version: antes.version } });
+    expect(ok.body).toMatchObject({ required: true, accepted: true });
+    const rec = manager.list().find((t) => t.rut === '12345678-5')!;
+    expect(rec.termsAccepted?.version).toBe(antes.version);
+    expect(Date.parse(rec.termsAccepted!.at)).not.toBeNaN();
+    expect((await call('GET', '/api/auth/me', { token })).body.terms.accepted).toBe(true);
   });
 });

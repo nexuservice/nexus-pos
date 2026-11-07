@@ -41,6 +41,8 @@ export interface WebOrderInput {
   phone: string;
   email?: string;
   note?: string;
+  /** El cliente marcó que leyó el aviso de privacidad de la tienda: es obligatorio. */
+  privacyAccepted?: boolean;
 }
 
 type Listener =(e: PaymentEvent) => void;
@@ -1305,6 +1307,7 @@ export class PosEngine {
     const name = input.customerName?.trim() ?? '';
     const phone = input.phone?.trim() ?? '';
     const email = input.email?.trim() ?? '';
+    if (input.privacyAccepted !== true) throw new PosError('INVALID_DATA', 'Debes aceptar el aviso de privacidad para enviar el pedido');
     if (!name || name.length > 80) throw new PosError('CUSTOMER_REQUIRED', 'Indica tu nombre');
     if (phone.replace(/\D/g, '').length < 8 || phone.length > 20) throw new PosError('INVALID_DATA', 'Indica un teléfono de contacto válido');
     if (email && (email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new PosError('INVALID_DATA', 'El correo no es válido');
@@ -1338,7 +1341,10 @@ export class PosEngine {
     this.cartOf(cart.id).pickup = true;
     try {
       for (const [id, qty] of asked) this.cartAdd(cart.id, id, qty);
-      return this.holdCart(cart.id, { customerName: name, phone, email, channel: 'web', note });
+      const held = this.holdCart(cart.id, { customerName: name, phone, email, channel: 'web', note });
+      const stored = this.state.tickets.find((t) => t.id === held.id)!;
+      stored.privacyAcceptedAt = this.now().toISOString();
+      return clone(stored);
     } catch (err) {
       this.releaseAll(this.cartOf(cart.id));
       delete this.state.carts[cart.id];

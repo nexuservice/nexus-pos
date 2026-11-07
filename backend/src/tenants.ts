@@ -16,6 +16,8 @@ export interface TenantRecord {
   slug?: string;
   /** Plan «tienda web» contratado. Los clientes antiguos no lo tienen: se tratan como sin tienda. */
   webStore?: boolean;
+  /** Última versión de los términos y la política de privacidad que aceptó el negocio, y cuándo. */
+  termsAccepted?: { version: string; at: string };
 }
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
 export const slugify = (s: string): string =>
@@ -166,6 +168,14 @@ export class TenantManager {
     rec.active = active;
     this.persist();
     return this.pub(rec);
+  }
+
+  /** Deja constancia de que el negocio aceptó la versión indicada de los términos. */
+  acceptTerms(id: string, version: string): void {
+    const rec = this.get(id);
+    if (!rec) throw new TenantError('NOT_FOUND', 'Cliente no existe');
+    rec.termsAccepted = { version, at: this.now().toISOString() };
+    this.persist();
   }
 
   /** Negocio con tienda web activa, por el nombre de su dirección pública. Cualquier otro caso devuelve undefined (sin delatar cuál). */

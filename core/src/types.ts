@@ -462,6 +462,8 @@ export interface Ticket {
   lines: CartLine[];
   totalClp: number;
   createdAt: string;
+  /** Pedidos de la tienda web: cuándo el cliente aceptó el aviso de privacidad. */
+  privacyAcceptedAt?: string;
 }
 
 export interface SalesFilter {

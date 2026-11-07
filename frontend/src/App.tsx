@@ -13,6 +13,7 @@ import { HelpView } from './views/Help';
 import { LoginView } from './views/Login';
 import { SuperAdminView } from './views/SuperAdmin';
 import { PublicStoreView } from './views/PublicStoreView';
+import { LegalPage, TermsGate, legalFromHash } from './legal/Legal';
 
 type Tab = 'pos' | 'store' | 'panel' | 'history' | 'admin' | 'help';
 const TABS: { id: Tab; label: string }[] = [
@@ -116,6 +117,23 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
   const [offline, setOffline] = useState(false);
   const webStore = !!(session.webStore ?? session.business.webStore);
   const slug = session.slug ?? session.business.slug ?? null;
+  const [terms, setTerms] = useState<{ required: boolean; version: string; accepted: boolean } | null>(null);
+  // Estado de la aceptación de términos (solo se exige si el servidor lo tiene activado).
+  useEffect(() => {
+    fetch(`${base.replace(/\/$/, '')}/api/auth/me`, { headers: { Authorization: `Bearer ${session.token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => { if (me?.terms) setTerms(me.terms); })
+      .catch(() => undefined);
+  }, [base, session.token]);
+  const acceptTerms = async () => {
+    if (!terms) return;
+    const r = await fetch(`${base.replace(/\/$/, '')}/api/auth/accept-terms`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` }, body: JSON.stringify({ version: terms.version }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.message ?? 'No se pudo guardar la aceptación.');
+    setTerms(data);
+  };
   const [webTick, setWebTick] = useState(0);
   const [webNotice, setWebNotice] = useState<string | null>(null);
   const seenWeb = useRef<Set<string> | null>(null);
@@ -164,6 +182,7 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
   }
 
   const go = (t: string) => setTab(t as Tab);
+  if (terms?.required && !terms.accepted) return <TermsGate onAccept={acceptTerms} onLogout={() => onLogout()} />;
   return (
     <ActiveShiftProvider>
     <div className="app">
@@ -198,10 +217,11 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
   const [notice, setNotice] = useState<string | null>(null);
   const [superAdmin, setSuperAdmin] = useState(isSuperAdminRoute);
+  const [legalDoc, setLegalDoc] = useState(legalFromHash);
   const slugRoute = publicSlug();
 
   useEffect(() => {
-    const on = () => setSuperAdmin(isSuperAdminRoute());
+    const on = () => { setSuperAdmin(isSuperAdminRoute()); setLegalDoc(legalFromHash()); };
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
@@ -217,7 +237,8 @@ export default function App() {
   if (slugRoute) return <PublicStoreView slug={decodeURIComponent(slugRoute)} />;
 
   let content: React.ReactNode;
-  if (superAdmin) content = <SuperAdminView base={API_URL} />;
+  if (legalDoc) content = <LegalPage doc={legalDoc} />;
+  else if (superAdmin) content = <SuperAdminView base={API_URL} />;
   else if (!session) content = <LoginView base={API_URL} notice={notice} onLogin={(s) => { saveSession(s); setNotice(null); setSession(s); }} />;
   else content = <Shell session={session} base={API_URL} onLogout={logout} />;
 

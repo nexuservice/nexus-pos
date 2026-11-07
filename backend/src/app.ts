@@ -3,7 +3,7 @@ import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import {
-  PosError, SimulatedGateway, startPayCart, isRpcName, isReadMethod, isValidRut, normalizeRut,
+  LEGAL_VERSION, PosError, SimulatedGateway, startPayCart, isRpcName, isReadMethod, isValidRut, normalizeRut,
   type PayMethod, type Provider, type TerminalGateway,
 } from '@nexus/core';
 import { LoginLimiter, safeEqual, signToken, verifyToken } from './auth';
@@ -31,6 +31,8 @@ export interface AppOptions {
    * Sin esto, todos los usuarios parecerían tener la IP del proxy y el límite de intentos de login se mezclaría.
    */
   trustProxy?: number;
+  /** Si es true, el negocio debe aceptar los términos vigentes antes de usar la app (se activa cuando los textos estén aprobados). */
+  requireTerms?: boolean;
   /** Servicio de respaldos: habilita los endpoints /api/admin/backups y la restauración. */
   backups?: BackupService;
 }
@@ -96,9 +98,25 @@ export function createApp(opts: AppOptions) {
     res.json({ token: signToken({ tid: tenant.id, exp }, secret), expiresAt: exp, business: { name: tenant.name, rut: tenant.rut, webStore: !!tenant.webStore, slug: tenant.slug ?? null } });
   });
 
+  const termsOf = (t: { termsAccepted?: { version: string } }) => ({
+    required: !!opts.requireTerms, version: LEGAL_VERSION, accepted: t.termsAccepted?.version === LEGAL_VERSION,
+  });
+
   app.get('/api/auth/me', requireTenant(), (_req, res) => {
     const t = manager.get(res.locals.tid)!;
-    res.json({ name: t.name, rut: t.rut, webStore: !!t.webStore, slug: t.slug ?? null });
+    res.json({ name: t.name, rut: t.rut, webStore: !!t.webStore, slug: t.slug ?? null, terms: termsOf(t) });
+  });
+
+  app.post('/api/auth/accept-terms', requireTenant(), (req, res, next) => {
+    try {
+      if (String((req.body ?? {}).version ?? '') !== LEGAL_VERSION) {
+        return res.status(409).json({ code: 'INVALID_DATA', message: 'Los términos cambiaron. Recarga la página y vuelve a leerlos.' });
+      }
+      manager.acceptTerms(res.locals.tid, LEGAL_VERSION);
+      res.json(termsOf(manager.get(res.locals.tid)!));
+    } catch (e) {
+      next(e);
+    }
   });
 
   // ---------- datos del negocio (todo pasa por el motor del negocio de la sesión) ----------
@@ -210,6 +228,7 @@ export function createApp(opts: AppOptions) {
       const ticket = engine.placeWebOrder({
         items, customerName: String(b.customerName ?? ''), phone: String(b.phone ?? ''),
         email: typeof b.email === 'string' ? b.email : undefined, note: typeof b.note === 'string' ? b.note : undefined,
+        privacyAccepted: b.privacyAccepted === true,
       });
       manager.save(tenant.id);
       res.status(201).json({ number: ticket.number, totalClp: ticket.totalClp, lines: ticket.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitPriceClp: l.unitPriceClp })) });

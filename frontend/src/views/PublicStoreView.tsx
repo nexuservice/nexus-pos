@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatClp } from '@nexus/core';
+import { Modal } from '../components';
+import { StoreNotice } from '../legal/Legal';
 import { ApiError, publicStore, type PublicOrderResult, type PublicStore } from '../api';
 
 const MISSING = 'Esta tienda no existe o no está disponible';
@@ -13,6 +15,8 @@ export function PublicStoreView({ slug }: { slug: string }) {
   const [category, setCategory] = useState('Todos');
   const [cart, setCart] = useState<Record<string, number>>({});
   const [form, setForm] = useState({ name: '', phone: '', email: '', note: '' });
+  const [privacy, setPrivacy] = useState(false);
+  const [showNotice, setShowNotice] = useState(false);
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState<PublicOrderResult | null>(null);
   const [showCart, setShowCart] = useState(false);
@@ -55,13 +59,14 @@ export function PublicStoreView({ slug }: { slug: string }) {
     if (!items.length) return;
     if (!form.name.trim() || form.phone.replace(/\D/g, '').length < 8) return setError('Ingresa tu nombre y un teléfono válido.');
     if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) return setError('El correo no parece válido.');
+    if (!privacy) return setError('Para enviar el pedido, marca que leíste el aviso de privacidad.');
     setError(null);
     setSending(true);
     try {
       const r = await publicStore.order(slug, {
         items: items.map((i) => ({ productId: i.p.id, quantity: i.quantity })),
         customerName: form.name.trim(), phone: form.phone.trim(),
-        email: form.email.trim() || undefined, note: form.note.trim() || undefined,
+        email: form.email.trim() || undefined, note: form.note.trim() || undefined, privacyAccepted: true,
       });
       setDone(r);
       setCart({});
@@ -166,11 +171,21 @@ export function PublicStoreView({ slug }: { slug: string }) {
               <input placeholder="Correo (opcional)" aria-label="Correo" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               <input placeholder="Nota para el local (opcional)" aria-label="Nota" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
               <p className="hint"><b>Pagas al retirar en el local.</b> Te guardamos los productos hasta que pases.</p>
+              <label className="check">
+                <input type="checkbox" checked={privacy} onChange={(e) => setPrivacy(e.target.checked)} />
+                <span>Leí el <a href="#aviso" onClick={(e) => { e.preventDefault(); setShowNotice(true); }}>aviso de privacidad y condiciones</a> de esta tienda</span>
+              </label>
               {error && <div className="alert" role="alert">{error}</div>}
               <button className="btn primary" disabled={sending || !items.length} onClick={send}>{sending ? 'Enviando…' : 'Enviar pedido'}</button>
             </div>
           </div>
         </div>
+      )}
+      {showNotice && (
+        <Modal title="Aviso de privacidad y condiciones" wide onClose={() => setShowNotice(false)}>
+          <StoreNotice business={b} />
+          <div className="row-btns"><button className="btn primary" onClick={() => setShowNotice(false)}>Cerrar</button></div>
+        </Modal>
       )}
     </div>
   );

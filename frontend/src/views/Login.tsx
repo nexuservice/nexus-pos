@@ -45,6 +45,7 @@ export function LoginView({ base, notice, onLogin }: { base: string; notice?: st
         {error && <div className="alert" role="alert">{error}</div>}
         <button className="btn primary" type="submit" disabled={busy}>{busy ? 'Ingresando…' : 'Ingresar'}</button>
         <p className="hint">¿No tienes acceso o olvidaste tu clave? Escríbenos y te ayudamos.</p>
+        <p className="hint"><a href="#/legal/terminos">Términos y condiciones</a> · <a href="#/legal/privacidad">Política de privacidad</a></p>
       </form>
     </div>
   );

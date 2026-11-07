@@ -32,6 +32,8 @@ const app = createApp({
   staticDir: serveWeb ? staticDir : undefined,
   trustProxy: behindProxy,
   backups,
+  // Se activa (NEXUS_REQUIRE_TERMS=1) cuando los textos legales estén revisados y aprobados.
+  requireTerms: process.env.NEXUS_REQUIRE_TERMS === '1',
 });
 
 app.listen(PORT, () => {

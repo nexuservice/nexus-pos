@@ -7,3 +7,4 @@ export * from './seed';
 export * from './reports';
 export * from './whatsapp';
 export * from './rpc';
+export * from './legal';

@@ -1155,7 +1155,7 @@ describe('API remota (RPC)', () => {
 });
 
 describe('tienda web pública', () => {
-  const cliente = { customerName: 'Ana Pérez', phone: '+56 9 1234 5678' };
+  const cliente = { customerName: 'Ana Pérez', phone: '+56 9 1234 5678', privacyAccepted: true };
   const caja = (e: PosEngine, id = COLA) => e.available(B, id, 'physical');
 
   it('el catálogo público no expone costos ni códigos internos y muestra el stock real de la caja', () => {
@@ -1201,6 +1201,17 @@ describe('tienda web pública', () => {
       .toThrow(PosError);
     expect(caja(e)).toBe(cola);
     expect(e.listTickets()).toHaveLength(0);
+  });
+
+  it('exige aceptar el aviso de privacidad y deja la fecha en el pedido', () => {
+    const e = make();
+    const items = [{ productId: COLA, quantity: 1 }];
+    expect(() => e.placeWebOrder({ ...cliente, privacyAccepted: false, items })).toThrow(/aviso de privacidad/);
+    expect(() => e.placeWebOrder({ customerName: 'Ana', phone: '+56 9 1234 5678', items })).toThrow(/aviso de privacidad/);
+    expect(e.listTickets()).toHaveLength(0);
+    const t = e.placeWebOrder({ ...cliente, items });
+    expect(Date.parse(t.privacyAcceptedAt!)).not.toBeNaN();
+    expect(e.listTickets()[0]!.privacyAcceptedAt).toBe(t.privacyAcceptedAt);
   });
 
   it('un producto oculto en la web no se puede pedir', () => {

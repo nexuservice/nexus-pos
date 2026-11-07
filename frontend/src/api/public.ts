@@ -9,6 +9,8 @@ export interface PublicOrderInput {
   phone: string;
   email?: string;
   note?: string;
+  /** El cliente marcó que leyó el aviso de privacidad de la tienda. */
+  privacyAccepted: boolean;
 }
 export interface PublicOrderResult { number: number; totalClp: number; lines: { name: string; quantity: number; unitPriceClp: number }[] }
 
