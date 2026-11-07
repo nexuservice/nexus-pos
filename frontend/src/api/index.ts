@@ -1,5 +1,5 @@
 export type { PosApi } from './types';
-export { API_URL, ApiError, createAdminClient, createHttpApi, login } from './http';
+export { API_URL, ApiError, createAdminClient, createHttpApi, login, loginCashier } from './http';
 export { publicStore } from './public';
 export type { PublicOrderResult, PublicProduct, PublicStore } from './public';
 export type { BackupInfo, TenantInfo } from './http';

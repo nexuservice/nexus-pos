@@ -5,6 +5,9 @@ export interface Session {
   business: { name: string; rut: string; webStore?: boolean; slug?: string | null };
   webStore?: boolean;
   slug?: string | null;
+  /** Sin este campo la sesión es la del administrador (dueño). «cashier» es el perfil limitado de cajero. */
+  role?: 'cashier';
+  cashierName?: string;
 }
 
 const KEY = 'nexus-session';

@@ -278,6 +278,8 @@ export function HelpView({ go }: { go?: (tab: string) => void }) {
         <Sec id="cajeros" titulo="🕐 Cajeros y jornadas">
           <h3>Cajeros</h3>
           <p>En <b>Administración → Cajeros</b> agrega a cada persona con su nombre y un PIN de 4 a 8 números. Usa <b>Desactivar</b> para quitar a quien ya no trabaja contigo, y <b>Activar</b> para devolverlo.</p>
+          <p><b>Dos tipos de ingreso.</b> El <b>administrador</b> (el dueño) entra con el RUT del negocio y su clave y ve todo. El <b>cajero</b> entra desde la pantalla de ingreso, en la opción «Cajero», con el RUT del negocio, su nombre y su PIN, y solo ve <b>Caja</b>, <b>Ingresar mercadería</b>, <b>Historial</b> y <b>Ayuda</b>: no puede cambiar precios, anular ventas, ver reportes ni tocar los datos del negocio.</p>
+          <p><b>¿Un cajero olvidó su PIN?</b> El PIN no se puede ver, por seguridad. En <b>Administración → Cajeros</b> toca <b>Cambiar PIN</b>, escribe uno nuevo y avísale. El PIN anterior deja de servir al instante.</p>
           <h3>Abrir la jornada</h3>
           <p>Sin una jornada abierta no se puede vender ni cobrar. En la <b>Caja</b>, elige al cajero, escribe su PIN y el <b>efectivo inicial</b> (el fondo de caja con el que empiezas).</p>
           <h3>Varias cajas</h3>

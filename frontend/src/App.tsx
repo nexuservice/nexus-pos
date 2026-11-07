@@ -10,17 +10,25 @@ import { PanelView } from './views/Panel';
 import { HistoryView } from './views/History';
 import { AdminView } from './views/Admin';
 import { HelpView } from './views/Help';
+import { ReceiveSection } from './views/Receive';
 import { LoginView } from './views/Login';
 import { SuperAdminView } from './views/SuperAdmin';
 import { PublicStoreView } from './views/PublicStoreView';
 import { LegalPage, TermsGate, legalFromHash } from './legal/Legal';
 
-type Tab = 'pos' | 'store' | 'panel' | 'history' | 'admin' | 'help';
+type Tab = 'pos' | 'store' | 'panel' | 'history' | 'admin' | 'help' | 'receive';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'pos', label: 'Caja' },
   { id: 'panel', label: 'Panel' },
   { id: 'history', label: 'Historial' },
   { id: 'admin', label: 'Administración' },
+  { id: 'help', label: 'Ayuda' },
+];
+/** Perfil de cajero: vender, ingresar mercadería, ver el historial y la ayuda. */
+const CASHIER_TABS: { id: Tab; label: string }[] = [
+  { id: 'pos', label: 'Caja' },
+  { id: 'receive', label: 'Ingresar mercadería' },
+  { id: 'history', label: 'Historial' },
   { id: 'help', label: 'Ayuda' },
 ];
 
@@ -67,7 +75,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function SettingsMenu(props: { api: PosApi; go: (t: Tab) => void; onLogout: () => void }) {
+function SettingsMenu(props: { api: PosApi; go: (t: Tab) => void; onLogout: () => void; tabs: { id: Tab; label: string }[] }) {
   const { prefs, set } = useSettings();
   const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement);
   useEffect(() => {
@@ -95,7 +103,7 @@ function SettingsMenu(props: { api: PosApi; go: (t: Tab) => void; onLogout: () =
             <Toggle on={prefs.compactCart} label="Detalle de venta compacto" onClick={() => set({ compactCart: !prefs.compactCart })} />
           </Group>
           <Group title="Ir a">
-            {TABS.filter((t) => ['admin', 'panel', 'history', 'help'].includes(t.id)).map((t) => (
+            {props.tabs.filter((t) => ['admin', 'panel', 'history', 'help', 'receive'].includes(t.id)).map((t) => (
               <button key={t.id} className="dd-item" onClick={() => { close(); props.go(t.id); }}>{t.label}</button>
             ))}
             <button className="dd-item" onClick={() => { close(); props.onLogout(); }}>Cerrar sesión</button>
@@ -115,7 +123,9 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
   const [tab, setTab] = useState<Tab>('pos');
   const [branchId, setBranchId] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
-  const webStore = !!(session.webStore ?? session.business.webStore);
+  const isCashier = session.role === 'cashier';
+  const tabs = isCashier ? CASHIER_TABS : TABS;
+  const webStore = !isCashier && !!(session.webStore ?? session.business.webStore);
   const slug = session.slug ?? session.business.slug ?? null;
   const [terms, setTerms] = useState<{ required: boolean; version: string; accepted: boolean } | null>(null);
   // Estado de la aceptación de términos (solo se exige si el servidor lo tiene activado).
@@ -187,20 +197,21 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
     <ActiveShiftProvider>
     <div className="app">
       <header className="top">
-        <div className="brand"><span className="logo">N</span> Nexus<small>{session.business.name}</small></div>
+        <div className="brand"><span className="logo">N</span> Nexus<small>{session.business.name}{isCashier && session.cashierName ? ` · 👤 ${session.cashierName}` : ''}</small></div>
         <nav aria-label="Secciones">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button key={t.id} className={'tab' + (t.id === tab ? ' on' : '')} onClick={() => setTab(t.id)}>{t.label}</button>
           ))}
         </nav>
-        <SettingsMenu api={api} go={setTab} onLogout={() => onLogout()} />
+        <SettingsMenu api={api} go={setTab} onLogout={() => onLogout()} tabs={tabs} />
       </header>
       {webNotice && <div className="alert" role="status" style={{ background: "var(--brand)", color: "var(--brand-ink)", margin: 0, borderRadius: 0, textAlign: "center" }}>🔔 {webNotice} · <button className="btn ghost sm" onClick={() => { setTab("pos"); setWebNotice(null); }}>Ver en Caja</button></div>}
       <main>
         {tab === 'pos' && <PosView api={api} branchId={branchId} go={go} refreshKey={webTick} />}
         {tab === 'store' && <StoreView api={api} branchId={branchId} />}
         {tab === 'panel' && <PanelView api={api} branchId={branchId} />}
-        {tab === 'history' && <HistoryView api={api} branchId={branchId} />}
+        {tab === 'history' && <HistoryView api={api} branchId={branchId} canVoid={!isCashier} />}
+        {tab === 'receive' && isCashier && <div className="page"><ReceiveSection api={api} branchId={branchId} /></div>}
         {tab === 'admin' && <AdminView api={api} branchId={branchId} storeSlug={webStore ? slug : null} />}
         {tab === 'help' && <HelpView go={go} />}
       </main>

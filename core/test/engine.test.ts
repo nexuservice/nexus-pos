@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   PosEngine, PosError, SimulatedGateway, payCart, seedState, splitIva, addIva, isValidRut, normalizeRut,
-  emptyState, RPC_METHODS, normalizePhone, whatsappUrl, whatsappMessage, formatClp,
+  emptyState, RPC_METHODS, CASHIER_METHODS, normalizePhone, whatsappUrl, whatsappMessage, formatClp,
 } from '../src';
 
 const B = 'branch_1';
@@ -1478,5 +1478,35 @@ describe('descripción y foto del producto', () => {
     const agua = e.publicCatalog().find((p) => p.id === AGUA)!;
     expect('description' in agua).toBe(false);
     expect('imageVersion' in agua).toBe(false);
+  });
+});
+
+describe('ingreso del cajero', () => {
+  it('identifica al cajero por nombre (sin importar tildes ni mayúsculas) y PIN', () => {
+    const e = make();
+    e.upsertCashier({ name: 'María José', pin: '4321' });
+    expect(e.authenticateCashier('  maria jose ', '4321').name).toBe('María José');
+    expect(() => e.authenticateCashier('María José', '0000')).toThrow(/Nombre o PIN incorrectos/);
+    expect(() => e.authenticateCashier('Nadie', '4321')).toThrow(/Nombre o PIN incorrectos/);
+    expect(() => e.authenticateCashier('', '')).toThrow(PosError);
+  });
+
+  it('un cajero desactivado no entra, y cambiar su PIN deja el anterior sin efecto', () => {
+    const e = make();
+    const c = e.upsertCashier({ name: 'Luis', pin: '1111' });
+    e.upsertCashier({ id: c.id, name: 'Luis', pin: '2222' });
+    expect(() => e.authenticateCashier('Luis', '1111')).toThrow(PosError);
+    expect(e.authenticateCashier('Luis', '2222').id).toBe(c.id);
+    e.upsertCashier({ id: c.id, name: 'Luis', active: false });
+    expect(() => e.authenticateCashier('Luis', '2222')).toThrow(PosError);
+  });
+
+  it('el perfil de cajero solo incluye métodos que existen y deja afuera lo delicado', () => {
+    for (const m of CASHIER_METHODS) expect(RPC_METHODS).toContain(m);
+    for (const m of ['upsertProduct', 'adjustStock', 'setProductSalePrice', 'voidSale', 'voidConsumption', 'registerPurchase', 'updateBusiness', 'upsertCashier',
+      'upsertClient', 'deleteClient', 'upsertPromotion', 'salesReport', 'snapshot', 'inventory', 'listPurchases', 'setWebReserve', 'moveAllWebToShop']) {
+      expect(CASHIER_METHODS as readonly string[]).not.toContain(m);
+    }
+    for (const m of ['cartAdd', 'catalog', 'receiveStock', 'listSales', 'openShift', 'closeShift']) expect(CASHIER_METHODS as readonly string[]).toContain(m);
   });
 });

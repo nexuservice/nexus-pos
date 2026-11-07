@@ -30,13 +30,14 @@ Las terminales nuevas parten en la carpeta de arriba: hacer `cd` a `pos-chile` p
 - Todo cambio de lógica lleva prueba en `core/test` o `backend/test`; cerrar con `typecheck`, `test` y `build` en verde.
 - Los tipos del servidor y del frontend salen del motor: al agregar un método público, añadirlo a `core/src/rpc.ts` (lectura o escritura) o no existirá en la API.
 - La UI no debe decir «boleta», «folio» ni «SII». «Boleta» solo existe como tipo de documento de **compra a proveedores**.
+- **Perfiles:** administrador (dueño; entra con RUT y clave) y cajero (entra con RUT, nombre y PIN; token con `role: 'cashier'`). Lo que puede hacer el cajero está en `CASHIER_METHODS` (`core/src/rpc.ts`) y lo aplica el servidor: **todo método nuevo queda solo para el administrador** salvo que se agregue ahí. El PIN no se muestra nunca; el dueño lo cambia desde Cajeros.
 - El cobro con tarjeta es simulado (`SimulatedGateway`). El progreso del pago usa SSE y, si falla, consulta el estado cada 1,5 s.
 
 ## Cómo probar de punta a punta
 Arrancar con datos temporales (no ensuciar `backend/data`): `NEXUS_DATA=<carpeta temporal> npm run dev:local`, crear un cliente con el comando `cliente`, entrar por el navegador y recorrer el flujo. Borrar la carpeta temporal al terminar.
 
 ## Pendiente conocido
-Editar PIN de cajero y cambio rápido de turno · importar productos por CSV · pago mixto · guardado asíncrono / Postgres · términos de servicio y política de privacidad · elegir hosting definitivo.
+Cambio rápido de turno · importar productos por CSV · pago mixto · guardado asíncrono / Postgres · términos de servicio y política de privacidad · elegir hosting definitivo.
 
 ## Delegar a subagentes (para no llenar el contexto del agente principal)
 Conviene delegar lo que **lee mucho y devuelve poco**: investigar documentación o precios (pedir ≤ 15 líneas con fuentes), correr typecheck/pruebas/build y reportar solo fallos, recorrer un flujo en el navegador, revisar un diff. El agente principal conserva las decisiones y las ediciones acopladas entre sí. Cada subagente empieza sin contexto: el encargo debe nombrar archivos, el resultado esperado y qué NO tocar. Dos agentes que editan nunca deben tocar los mismos archivos.

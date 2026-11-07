@@ -377,3 +377,73 @@ describe('fotos de productos', () => {
     expect((await fetch(`${base}/api/public/almacen-don-pepe/img/${id}`)).status).toBe(404);
   });
 });
+
+describe('perfil de cajero', () => {
+  async function conCajero() {
+    await createTenant(PEPE);
+    const owner = await login(PEPE);
+    await rpc(owner, 'upsertCashier', { name: 'Ana Rojas', pin: '4321' });
+    return owner;
+  }
+  const cajeroLogin = (body: object) => call('POST', '/api/auth/cashier-login', { body });
+
+  it('entra con RUT, nombre y PIN, y el servidor sabe que es cajero', async () => {
+    await conCajero();
+    const r = await cajeroLogin({ rut: PEPE.rut, name: 'ana rojas', pin: '4321' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ role: 'cashier', cashierName: 'Ana Rojas', business: { name: 'Almacén Don Pepe' } });
+    const me = await call('GET', '/api/auth/me', { token: r.body.token });
+    expect(me.body).toMatchObject({ role: 'cashier', cashierName: 'Ana Rojas', terms: { required: false, accepted: true } });
+  });
+
+  it('rechaza datos incorrectos con el mismo mensaje y bloquea tras varios intentos', async () => {
+    await conCajero();
+    for (const b of [{ rut: PEPE.rut, name: 'Ana Rojas', pin: '0000' }, { rut: PEPE.rut, name: 'Otra', pin: '4321' }, { rut: '11.111.111-1', name: 'Ana Rojas', pin: '4321' }]) {
+      const r = await cajeroLogin(b);
+      expect(r.status).toBe(401);
+      expect(r.body.message).toBe('RUT, nombre o PIN incorrectos');
+    }
+    for (let i = 0; i < 3; i++) await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '9999' });
+    const bloqueado = await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '4321' });
+    expect(bloqueado.status).toBe(429);
+  });
+
+  it('puede vender y ingresar mercadería, pero no tocar precios, reportes ni datos del negocio', async () => {
+    const owner = await conCajero();
+    const { body } = await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '4321' });
+    const token = body.token as string;
+    expect((await rpc(token, 'branches')).status).toBe(200);
+    expect((await rpc(token, 'receiveStock', 'branch_1', { barcode: '7801', name: 'Leche', priceClp: 1190, costClp: 700, quantity: 3 })).status).toBe(200);
+    expect((await rpc(token, 'createCart', 'branch_1', 'physical')).status).toBe(200);
+    expect((await rpc(token, 'listSales', {})).status).toBe(200);
+    for (const m of ['upsertProduct', 'adjustStock', 'setProductSalePrice', 'voidSale', 'registerPurchase', 'updateBusiness', 'upsertCashier', 'salesReport', 'snapshot', 'inventory']) {
+      const r = await rpc(token, m);
+      expect(r.status, m).toBe(403);
+      expect(r.body.code).toBe('FORBIDDEN');
+    }
+    // el dueño sí puede
+    expect((await rpc(owner, 'inventory', 'branch_1')).status).toBe(200);
+  });
+
+  it('no sube fotos ni acepta términos, y deja de valer si el dueño desactiva al cajero', async () => {
+    const owner = await conCajero();
+    const { body } = await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '4321' });
+    const token = body.token as string;
+    const foto = await fetch(`${base}/api/products/x/image`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` }, body: new Uint8Array([0xff, 0xd8, 0xff, 1]) });
+    expect(foto.status).toBe(403);
+    expect((await call('POST', '/api/auth/accept-terms', { token, body: { version: 'x' } })).status).toBe(403);
+
+    const cajeros = (await rpc(owner, 'listCashiers')).body as { id: string; name: string }[];
+    await rpc(owner, 'upsertCashier', { id: cajeros[0]!.id, name: cajeros[0]!.name, active: false });
+    expect((await rpc(token, 'branches')).status).toBe(401);
+    expect((await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '4321' })).status).toBe(401);
+  });
+
+  it('el dueño cambia el PIN de un cajero y el anterior deja de servir', async () => {
+    const owner = await conCajero();
+    const id = ((await rpc(owner, 'listCashiers')).body as { id: string }[])[0]!.id;
+    await rpc(owner, 'upsertCashier', { id, name: 'Ana Rojas', pin: '7777' });
+    expect((await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '4321' })).status).toBe(401);
+    expect((await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '7777' })).status).toBe(200);
+  });
+});

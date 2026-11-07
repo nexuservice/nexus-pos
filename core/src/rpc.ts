@@ -19,3 +19,21 @@ export const RPC_METHODS = [...READ_METHODS, ...WRITE_METHODS] as const;
 export type RpcName = (typeof RPC_METHODS)[number];
 export const isRpcName = (n: string): n is RpcName => (RPC_METHODS as readonly string[]).includes(n);
 export const isReadMethod = (n: string): boolean => (READ_METHODS as readonly string[]).includes(n);
+
+/**
+ * Lo que puede hacer el perfil de cajero: vender, abrir y cerrar su caja, ingresar mercadería por escaneo y ver el historial.
+ * Todo lo demás (precios, inventario, clientes, promociones, compras, anulaciones, reportes, datos del negocio) es del administrador.
+ */
+export const CASHIER_METHODS: readonly RpcName[] = [
+  // consultar
+  'branches', 'catalog', 'listProducts', 'nextInternalCode', 'searchClients', 'clientBalance', 'listCashiers', 'activePromotions', 'getCart',
+  'nextOrderNumber', 'currentShift', 'shiftInfo', 'openShifts', 'verifyShiftPin', 'getPayment', 'getBusiness', 'findProduct', 'getSale',
+  'listSales', 'listTickets', 'listConsumptions',
+  // vender y operar la caja
+  'applyPromo', 'removePromo', 'createCart', 'cartAdd', 'cartSetQuantity', 'cartRemove', 'cartClear', 'setCustomer', 'openShift', 'closeShift',
+  'assignCartShift', 'cancelPayment', 'holdCart', 'createPaidTicket', 'resumeTicket', 'completeTicket', 'cancelTicket', 'payClientDebt',
+  'registerConsumption',
+  // ingresar mercadería
+  'receiveStock',
+];
+export const isCashierMethod = (n: string): boolean => (CASHIER_METHODS as readonly string[]).includes(n);

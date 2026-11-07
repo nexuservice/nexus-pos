@@ -204,6 +204,12 @@ export class TenantManager {
     this.persist();
   }
 
+  /** Negocio activo por su RUT (para el ingreso de cajeros). Devuelve undefined si no existe o está desactivado. */
+  findActiveByRut(rut: string): TenantRecord | undefined {
+    const rec = this.byRut(rut ?? '');
+    return rec?.active ? rec : undefined;
+  }
+
   /** Negocio con tienda web activa, por el nombre de su dirección pública. Cualquier otro caso devuelve undefined (sin delatar cuál). */
   bySlug(slug: string): TenantRecord | undefined {
     this.sync();

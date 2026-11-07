@@ -37,6 +37,11 @@ export async function login(base: string, rut: string, password: string): Promis
   return request<Session>(base, 'POST', '/api/auth/login', { rut, password });
 }
 
+/** Ingreso de un cajero: RUT del negocio, su nombre y su PIN. Recibe un perfil limitado. */
+export async function loginCashier(base: string, rut: string, name: string, pin: string): Promise<Session> {
+  return request<Session>(base, 'POST', '/api/auth/cashier-login', { rut, name, pin });
+}
+
 /** Cliente de la API del negocio con sesión. Si el servidor responde 401, avisa para volver al login. */
 export function createHttpApi(base: string, getToken: () => string, onUnauthorized: () => void): PosApi {
   async function post<T>(path: string, body: unknown): Promise<T> {

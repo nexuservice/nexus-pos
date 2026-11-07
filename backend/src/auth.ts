@@ -29,6 +29,10 @@ export interface TokenPayload {
   tid: string;
   /** Vencimiento, en ms desde epoch. */
   exp: number;
+  /** Perfil limitado de cajero (sin este campo, la sesión es la del administrador/dueño). */
+  role?: 'cashier';
+  /** Id del cajero, cuando el perfil es de cajero. */
+  cid?: string;
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url');

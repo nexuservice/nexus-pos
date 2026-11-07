@@ -8,7 +8,7 @@ import { useActiveShift } from '../activeShift';
 
 type Row = Sale;
 
-export function HistoryView({ api, branchId }: { api: PosApi; branchId: string | null }) {
+export function HistoryView({ api, branchId, canVoid = true }: { api: PosApi; branchId: string | null; canVoid?: boolean }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [consumptions, setConsumptions] = useState<Consumption[]>([]);
   const [scope, setScope] = useState<'all' | 'shift'>('all');
@@ -97,7 +97,7 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
               <td>{[c.who, c.note].filter(Boolean).join(' · ') || '—'}{c.status === 'voided' && c.voidReason ? <small> (anulado: {c.voidReason})</small> : null}</td>
               <td>{formatClp(c.costClp)}</td>
               <td><span className={'pill ' + (c.status === 'voided' ? 'bad' : 'ok')}>{c.status === 'voided' ? 'anulado' : 'activo'}</span></td>
-              <td>{c.status !== 'voided' && <button className="btn ghost sm" onClick={() => voidConsumption(c)}>Anular</button>}</td>
+              <td>{canVoid && c.status !== 'voided' && <button className="btn ghost sm" onClick={() => voidConsumption(c)}>Anular</button>}</td>
             </tr>
           ))}
           {!consumptions.length && <tr><td colSpan={8} className="empty">Sin consumos</td></tr>}
@@ -112,7 +112,7 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
           <p className="hint">{INTERNAL_RECEIPT_NOTICE}</p>
           <div className="row-btns">
             <button className="btn ghost" onClick={() => printReceipt(detail)}>🖨 Imprimir</button>
-            {detail.status === 'completed' && <button className="btn danger" onClick={() => voidSale(detail)}>Anular venta</button>}
+            {canVoid && detail.status === 'completed' && <button className="btn danger" onClick={() => voidSale(detail)}>Anular venta</button>}
             <button className="btn primary" onClick={() => setDetail(null)}>Cerrar</button>
           </div>
         </Modal>

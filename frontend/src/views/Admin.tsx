@@ -123,12 +123,38 @@ function Cashiers({ api }: { api: PosApi }) {
   const [rows, reload] = useList(() => api.rpc.listCashiers());
   const [f, setF] = useState({ name: '', pin: '' });
   const [error, setError] = useState<string | null>(null);
+  const [pinFor, setPinFor] = useState<{ id: string; name: string } | null>(null);
+  const [newPin, setNewPin] = useState('');
+  const [pinDone, setPinDone] = useState<string | null>(null);
+  const changePin = async () => {
+    if (!pinFor) return;
+    try {
+      setError(null);
+      await api.rpc.upsertCashier({ id: pinFor.id, name: pinFor.name, pin: newPin });
+      setPinDone(pinFor.name); setPinFor(null); setNewPin('');
+    } catch (e) { setError(msg(e)); }
+  };
   const add = async () => {
     try { setError(null); await api.rpc.upsertCashier({ name: f.name, pin: f.pin }); setF({ name: '', pin: '' }); await reload(); } catch (e) { setError(msg(e)); }
   };
   return (
     <>
       <div className="page-head"><h2>Cajeros</h2></div>
+      <p className="hint">
+        Los cajeros entran a la app con el RUT del negocio, su <b>nombre</b> y su <b>PIN</b> (opción «Cajero» en la pantalla de ingreso). Solo pueden vender, ingresar mercadería y ver el historial.
+        Si alguien olvida su PIN, <b>no se puede ver</b> (por seguridad no se muestra): usa <b>Cambiar PIN</b> y dale el nuevo.
+      </p>
+      {pinDone && <div className="alert" role="status" style={{ background: 'color-mix(in srgb, var(--ok) 14%, transparent)', color: 'var(--ok)' }}>PIN de {pinDone} cambiado. El anterior ya no sirve.</div>}
+      {pinFor && (
+        <div className="inline-form">
+          <h4>Cambiar PIN de {pinFor.name}</h4>
+          <label className="field">Nuevo PIN (4 a 8 dígitos)
+            <input type="password" inputMode="numeric" autoFocus value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && changePin()} />
+          </label>
+          <Err text={error} />
+          <div className="row-btns"><button className="btn ghost" onClick={() => { setPinFor(null); setNewPin(''); setError(null); }}>Cancelar</button><button className="btn primary" disabled={newPin.length < 4} onClick={changePin}>Guardar PIN</button></div>
+        </div>
+      )}
       <div className="inline-form">
         <div className="two-col">
           <label className="field">Nombre<input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
@@ -141,7 +167,8 @@ function Cashiers({ api }: { api: PosApi }) {
         <thead><tr><th>Nombre</th><th>Estado</th><th /></tr></thead>
         <tbody>{rows.map((c: Omit<Cashier, 'pin'>) => (
           <tr key={c.id}><td>{c.name}</td><td><span className={'pill ' + (c.active ? 'ok' : 'bad')}>{c.active ? 'activo' : 'inactivo'}</span></td>
-            <td><button className="btn ghost sm" onClick={async () => { await api.rpc.upsertCashier({ id: c.id, name: c.name, active: !c.active }); await reload(); }}>{c.active ? 'Desactivar' : 'Activar'}</button></td></tr>))}</tbody>
+            <td><button className="btn ghost sm" onClick={() => { setPinDone(null); setError(null); setPinFor({ id: c.id, name: c.name }); }}>Cambiar PIN</button>{' '}
+              <button className="btn ghost sm" onClick={async () => { await api.rpc.upsertCashier({ id: c.id, name: c.name, active: !c.active }); await reload(); }}>{c.active ? 'Desactivar' : 'Activar'}</button></td></tr>))}</tbody>
       </table></div>
     </>
   );

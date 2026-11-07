@@ -519,6 +519,14 @@ export class PosEngine {
     return this.state.cashiers.map(({ pin: _pin, ...c }) => c);
   }
 
+  /** Identifica a un cajero por nombre y PIN (para entrar con el perfil de cajero). Ante cualquier error, el mismo mensaje: no da pistas. */
+  authenticateCashier(name: string, pin: string): { id: string; name: string } {
+    const wanted = norm(String(name ?? '').trim());
+    const c = wanted ? this.state.cashiers.find((x) => x.active && norm(x.name) === wanted) : undefined;
+    if (!c || c.pin !== String(pin ?? '')) throw new PosError('BAD_PIN', 'Nombre o PIN incorrectos');
+    return { id: c.id, name: c.name };
+  }
+
   upsertCashier(input: Partial<Cashier> & { name: string; pin?: string }): Omit<Cashier, 'pin'> {
     const name = input.name?.trim();
     if (!name) throw new PosError('INVALID_DATA', 'El nombre es obligatorio');

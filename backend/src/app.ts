@@ -3,7 +3,7 @@ import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import {
-  LEGAL_VERSION, PosError, SimulatedGateway, startPayCart, isRpcName, isReadMethod, isValidRut, normalizeRut,
+  LEGAL_VERSION, PosError, SimulatedGateway, startPayCart, isRpcName, isReadMethod, isCashierMethod, isValidRut, normalizeRut,
   type PayMethod, type Provider, type TerminalGateway,
 } from '@nexus/core';
 import { LoginLimiter, safeEqual, signToken, verifyToken } from './auth';
@@ -61,7 +61,22 @@ export function createApp(opts: AppOptions) {
     const payload = token ? verifyToken(token, secret) : null;
     const tenant = payload ? manager.get(payload.tid) : undefined;
     if (!payload || !tenant || !tenant.active) return unauthorized(res);
+    if (payload.role === 'cashier') {
+      // El perfil de cajero deja de valer apenas el dueño desactiva a ese cajero.
+      const cashier = manager.engine(tenant.id).listCashiers().find((c) => c.id === payload.cid);
+      if (!cashier || !cashier.active) return unauthorized(res, 'Tu usuario de cajero ya no está activo');
+      res.locals.role = 'cashier';
+      res.locals.cashierName = cashier.name;
+    } else {
+      res.locals.role = 'owner';
+    }
     res.locals.tid = tenant.id;
+    next();
+  };
+
+  /** Lo que solo hace el dueño (administrador). */
+  const ownerOnly = (_req: Request, res: Response, next: NextFunction) => {
+    if (res.locals.role === 'cashier') return res.status(403).json({ code: 'FORBIDDEN', message: 'Tu perfil de cajero no puede hacer esto. Pídeselo al administrador.' });
     next();
   };
 
@@ -104,10 +119,46 @@ export function createApp(opts: AppOptions) {
 
   app.get('/api/auth/me', requireTenant(), (_req, res) => {
     const t = manager.get(res.locals.tid)!;
-    res.json({ name: t.name, rut: t.rut, webStore: !!t.webStore, slug: t.slug ?? null, terms: termsOf(t) });
+    const cashier = res.locals.role === 'cashier';
+    res.json({
+      name: t.name, rut: t.rut, webStore: !!t.webStore, slug: t.slug ?? null,
+      role: res.locals.role, cashierName: cashier ? res.locals.cashierName : null,
+      // Los términos los acepta el dueño: al cajero no se le piden.
+      terms: cashier ? { required: false, version: LEGAL_VERSION, accepted: true } : termsOf(t),
+    });
   });
 
-  app.post('/api/auth/accept-terms', requireTenant(), (req, res, next) => {
+  /** Ingreso del cajero: RUT del negocio, su nombre y su PIN. Recibe un perfil limitado (vender, ingresar mercadería e historial). */
+  app.post('/api/auth/cashier-login', (req, res, next) => {
+    try {
+      const { rut, name, pin } = (req.body ?? {}) as { rut?: string; name?: string; pin?: string };
+      const rutKey = isValidRut(String(rut ?? '')) ? normalizeRut(String(rut)) : String(rut ?? '').slice(0, 20);
+      const key = `${req.ip}|cajero|${rutKey}`;
+      const wait = limiter.blockedFor(key);
+      if (wait > 0) {
+        return res.status(429).json({ code: 'TOO_MANY', message: `Demasiados intentos fallidos. Intenta de nuevo en ${Math.ceil(wait / 60_000)} minuto(s).` });
+      }
+      const tenant = manager.findActiveByRut(String(rut ?? ''));
+      let cashier: { id: string; name: string } | null = null;
+      if (tenant) {
+        try { cashier = manager.engine(tenant.id).authenticateCashier(String(name ?? ''), String(pin ?? '')); } catch { cashier = null; }
+      }
+      if (!tenant || !cashier) {
+        limiter.fail(key);
+        return res.status(401).json({ code: 'BAD_CREDENTIALS', message: 'RUT, nombre o PIN incorrectos' });
+      }
+      limiter.reset(key);
+      const exp = Date.now() + ttl;
+      res.json({
+        token: signToken({ tid: tenant.id, exp, role: 'cashier', cid: cashier.id }, secret), expiresAt: exp, role: 'cashier', cashierName: cashier.name,
+        business: { name: tenant.name, rut: tenant.rut, webStore: !!tenant.webStore, slug: tenant.slug ?? null },
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post('/api/auth/accept-terms', requireTenant(), ownerOnly, (req, res, next) => {
     try {
       if (String((req.body ?? {}).version ?? '') !== LEGAL_VERSION) {
         return res.status(409).json({ code: 'INVALID_DATA', message: 'Los términos cambiaron. Recarga la página y vuelve a leerlos.' });
@@ -124,6 +175,9 @@ export function createApp(opts: AppOptions) {
     try {
       const name = String(req.params.method);
       if (!isRpcName(name)) return res.status(404).json({ code: 'NOT_FOUND', message: 'Método no existe' });
+      if (res.locals.role === 'cashier' && !isCashierMethod(name)) {
+        return res.status(403).json({ code: 'FORBIDDEN', message: 'Tu perfil de cajero no puede hacer esto. Pídeselo al administrador.' });
+      }
       const engine = manager.engine(res.locals.tid);
       const args: unknown[] = Array.isArray(req.body?.args) ? req.body.args : [];
       const out = (engine as unknown as Record<string, (...a: unknown[]) => unknown>)[name]!(...args);
@@ -190,7 +244,7 @@ export function createApp(opts: AppOptions) {
   const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
   const isJpeg = (b: Buffer) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
 
-  app.put('/api/products/:id/image', requireTenant(), express.raw({ type: 'image/jpeg', limit: '400kb' }), (req, res, next) => {
+  app.put('/api/products/:id/image', requireTenant(), ownerOnly, express.raw({ type: 'image/jpeg', limit: '400kb' }), (req, res, next) => {
     try {
       const productId = String(req.params.id);
       const tid = res.locals.tid as string;
@@ -207,7 +261,7 @@ export function createApp(opts: AppOptions) {
     }
   });
 
-  app.delete('/api/products/:id/image', requireTenant(), (req, res, next) => {
+  app.delete('/api/products/:id/image', requireTenant(), ownerOnly, (req, res, next) => {
     try {
       const productId = String(req.params.id);
       const tid = res.locals.tid as string;
