@@ -1,38 +1,36 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  PAY_METHODS, PAY_METHOD_LABEL, formatClp, splitIva,
+  PAY_METHODS, PAY_METHOD_LABEL, addIva, formatClp, splitIva,
   type Cashier, type ClientWithDebt, type InventoryRow, type Product, type Promotion, type Shift,
 } from '@nexus/core';
 import type { PosApi } from '../api';
 import { DebtModal } from '../components';
 import { BusinessSection } from './Business';
 import { ReceiveSection } from './Receive';
-import { PurchaseModal, PurchasesSection } from './Purchases';
+import { PurchasesSection } from './Purchases';
 import { PriceModal, StockCardModal } from './StockCard';
 import { fmtDateTime } from '../format';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
 
-type Section = 'products' | 'receive' | 'purchases' | 'clients' | 'cashiers' | 'promos' | 'inventory' | 'shifts' | 'business';
+type Section = 'inventory' | 'receive' | 'clients' | 'cashiers' | 'promos' | 'shifts' | 'business';
 const SECTIONS: [Section, string][] = [
-  ['products', '📦 Productos'], ['receive', '📥 Ingreso por escaneo'], ['purchases', '🧾 Compras'], ['clients', '👥 Clientes'], ['cashiers', '👤 Cajeros'],
-  ['promos', '🎫 Descuentos y promociones'], ['inventory', '📊 Inventario'], ['shifts', '🕐 Jornadas'], ['business', '🏪 Mi negocio'],
+  ['inventory', '📦 Inventario'], ['receive', '📥 Ingresar mercadería'], ['clients', '👥 Clientes'], ['cashiers', '👤 Cajeros'],
+  ['promos', '🎫 Descuentos y promociones'], ['shifts', '🕐 Jornadas'], ['business', '🏪 Mi negocio'],
 ];
 
 const Err = ({ text }: { text: string | null }) => (text ? <div className="alert" role="alert">{text}</div> : null);
 
 export function AdminView({ api, branchId, storeSlug }: { api: PosApi; branchId: string | null; storeSlug?: string | null }) {
-  const [section, setSection] = useState<Section>('products');
+  const [section, setSection] = useState<Section>('inventory');
   return (
     <div className="admin">
       <nav className="side" aria-label="Administración">
         {SECTIONS.map(([id, label]) => <button key={id} className={id === section ? 'on' : ''} onClick={() => setSection(id)}>{label}</button>)}
       </nav>
       <div className="admin-body">
-        {section === 'products' && <Products api={api} branchId={branchId} />}
-        {section === 'receive' && <ReceiveSection api={api} branchId={branchId} />}
+        {section === 'receive' && <ReceiveHub api={api} branchId={branchId} />}
         {section === 'business' && <BusinessSection api={api} storeSlug={storeSlug} />}
-        {section === 'purchases' && <PurchasesSection api={api} branchId={branchId} />}
         {section === 'clients' && <Clients api={api} />}
         {section === 'cashiers' && <Cashiers api={api} />}
         {section === 'promos' && <Promos api={api} />}
@@ -50,56 +48,16 @@ function useList<T>(load: () => Promise<T[]>) {
   return [rows, reload] as const;
 }
 
-function Products({ api, branchId }: { api: PosApi; branchId: string | null }) {
-  const [rows, reload] = useList(() => api.rpc.listProducts());
-  const blank = { name: '', sku: '', barcode: '', category: '', price: '', cost: '', published: true, active: true };
-  const [f, setF] = useState<typeof blank & { id?: string }>(blank);
-  const [open, setOpen] = useState(false);
-  const [buying, setBuying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const edit = (p: Product) => { setF({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, price: String(p.priceClp), cost: String(p.costClp), published: p.published, active: p.active }); setOpen(true); };
-  const save = async () => {
-    try {
-      setError(null);
-      await api.rpc.upsertProduct({ id: f.id, name: f.name, sku: f.sku, barcode: f.barcode, category: f.category, priceClp: Number(f.price), costClp: Number(f.cost) || 0, published: f.published, active: f.active });
-      setOpen(false); setF(blank); await reload();
-    } catch (e) { setError(msg(e)); }
-  };
+/** Ingresar mercadería: escanear es lo normal y lo más rápido; «con factura» queda para guardar los datos del documento del proveedor. */
+function ReceiveHub({ api, branchId }: { api: PosApi; branchId: string | null }) {
+  const [mode, setMode] = useState<'scan' | 'invoice'>('scan');
   return (
     <>
-      <div className="page-head">
-        <h2>Productos</h2>
-        <div className="head-actions">
-          <button className="btn primary sm" onClick={() => { setF(blank); setOpen(true); }}>➕ Nuevo producto</button>
-          {branchId && <button className="btn primary sm" onClick={() => setBuying(true)}>🧾 Nueva compra</button>}
-        </div>
+      <div className="chips" role="tablist" aria-label="Cómo ingresar mercadería">
+        <button className={'chip' + (mode === 'scan' ? ' on' : '')} onClick={() => setMode('scan')}>📥 Escanear (lo más rápido)</button>
+        <button className={'chip' + (mode === 'invoice' ? ' on' : '')} onClick={() => setMode('invoice')}>🧾 Con factura del proveedor</button>
       </div>
-      <p className="hint">Un producto nuevo parte sin unidades: para ingresarlas registra una <b>compra</b> con los datos de la factura.</p>
-      {buying && branchId && <PurchaseModal api={api} branchId={branchId} onClose={() => setBuying(false)} onSaved={() => { reload().catch(() => undefined); }} />}
-      {open && (
-        <div className="inline-form">
-          <div className="two-col">
-            <label className="field">Nombre<input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
-            <label className="field">Categoría<input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></label>
-            <label className="field">SKU<input value={f.sku} onChange={(e) => setF({ ...f, sku: e.target.value })} /></label>
-            <label className="field">Código de barras<input value={f.barcode} onChange={(e) => setF({ ...f, barcode: e.target.value })} /></label>
-            <label className="field">Precio (CLP, IVA incl.)<input inputMode="numeric" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} />
-              <small>Neto {formatClp(splitIva(Number(f.price) || 0).netClp)} · para subir precios con una compra, digita el precio con IVA en «Nueva compra»</small></label>
-            <label className="field">Costo (CLP)<input inputMode="numeric" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} /></label>
-            <label className="check"><input type="checkbox" checked={f.published} onChange={(e) => setF({ ...f, published: e.target.checked })} /> Visible en tienda online</label>
-            <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Activo</label>
-          </div>
-          <Err text={error} />
-          <div className="row-btns"><button className="btn primary" onClick={save}>Guardar</button><button className="btn ghost" onClick={() => setOpen(false)}>Cancelar</button></div>
-        </div>
-      )}
-      <div className="table-wrap"><table>
-        <thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th><th>Costo</th><th>Online</th><th>Estado</th><th /></tr></thead>
-        <tbody>{rows.map((p) => (
-          <tr key={p.id}><td>{p.name}<br /><small>{p.sku} · {p.barcode}</small></td><td>{p.category}</td><td>{formatClp(p.priceClp)}</td><td>{formatClp(p.costClp)}</td>
-            <td>{p.published ? 'Sí' : 'No'}</td><td><span className={'pill ' + (p.active ? 'ok' : 'bad')}>{p.active ? 'activo' : 'inactivo'}</span></td>
-            <td><button className="btn ghost sm" onClick={() => edit(p)}>Editar</button></td></tr>))}</tbody>
-      </table></div>
+      {mode === 'scan' ? <ReceiveSection api={api} branchId={branchId} /> : <PurchasesSection api={api} branchId={branchId} />}
     </>
   );
 }
@@ -207,40 +165,123 @@ function Promos({ api }: { api: PosApi }) {
   );
 }
 
+const blankProduct = { name: '', sku: '', barcode: '', category: '', price: '', cost: '', published: true, active: true };
+
+/** Inventario: lo que hay en la caja y lo que se ofrece en la web, precios y datos de cada producto. */
 function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) {
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [adj, setAdj] = useState<Record<string, string>>({});
+  const [web, setWeb] = useState<Record<string, string>>({});
   const [cardFor, setCardFor] = useState<Product | null>(null);
   const [priceFor, setPriceFor] = useState<Product | null>(null);
+  const [f, setF] = useState<typeof blankProduct & { id?: string }>(blankProduct);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const load = useCallback(async () => { if (branchId) setRows(await api.rpc.inventory(branchId)); }, [api, branchId]);
   useEffect(() => { load().catch(() => undefined); }, [load]);
   const run = async (fn: () => Promise<unknown>) => { try { setError(null); await fn(); await load(); } catch (e) { setError(msg(e)); } };
+
+  const edit = (p: Product) => {
+    setError(null);
+    setF({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, price: String(p.priceClp), cost: String(addIva(p.costClp)), published: p.published, active: p.active });
+    setOpen(true);
+  };
+  const saveProduct = async () => {
+    try {
+      setError(null);
+      const cost = Number(f.cost.replace(/\D/g, '')) || 0;
+      await api.rpc.upsertProduct({
+        id: f.id, name: f.name, sku: f.sku, barcode: f.barcode, category: f.category, priceClp: Number(f.price.replace(/\D/g, '')),
+        costClp: splitIva(cost).netClp, published: f.published, active: f.active,
+      });
+      setOpen(false); setF(blankProduct); await load();
+    } catch (e) { setError(msg(e)); }
+  };
+  const setVisible = (p: Product, published: boolean) =>
+    run(() => api.rpc.upsertProduct({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, priceClp: p.priceClp, costClp: p.costClp, published, active: p.active }));
+  const shown = rows.filter(({ product }) => !query.trim() || product.name.toLowerCase().includes(query.trim().toLowerCase()) || product.barcode.includes(query.trim()));
+
   return (
     <>
-      <div className="page-head"><h2>Inventario por canal</h2></div>
-      <p className="hint">Mueve unidades entre caja y tienda online o ajusta el stock de la caja (positivo suma, negativo resta). «res.» = reservado en carritos y pedidos abiertos. Toca un producto para ver su tarjeta de existencia. Con «✏️ Editar» corriges el precio de venta: rige desde ahora y las ventas ya hechas no cambian.</p>
-      <Err text={error} />
-      <div className="table-wrap"><table>
-        <thead><tr><th>Producto</th><th>Caja</th><th>Online</th><th>Precio de venta</th><th>Mover 5</th><th>Ajustar caja</th></tr></thead>
-        <tbody>{rows.map(({ product, physical, online }) => (
-          <tr key={product.id}>
-            <td><button className="link-btn" title="Ver tarjeta de existencia" onClick={() => setCardFor(product)}>{product.name}</button>{!product.published && <span className="tag">solo local</span>}</td>
-            <td>{physical.qty}{physical.reserved > 0 && <small> ({physical.reserved} res.)</small>}</td>
-            <td>{online.qty}{online.reserved > 0 && <small> ({online.reserved} res.)</small>}</td>
-            <td>
+      <div className="page-head">
+        <h2>Inventario</h2>
+        <div className="head-actions"><button className="btn primary sm" onClick={() => { setError(null); setF(blankProduct); setOpen(true); }}>➕ Nuevo producto</button></div>
+      </div>
+      <p className="hint">
+        <b>En la caja</b> es lo que tienes para vender en el local. <b>En la web</b> es lo que ofreces en tu tienda web: escribe la cantidad y pulsa <b>Guardar</b> (se pasa desde la caja; si bajas el número, vuelve a la caja).
+        Toca el nombre de un producto para ver su tarjeta de existencia. Un producto nuevo parte sin unidades: ingrésalas en <b>Ingresar mercadería</b>.
+      </p>
+      {open && (
+        <div className="inline-form">
+          <h4>{f.id ? 'Editar producto' : 'Producto nuevo'}</h4>
+          <div className="two-col">
+            <label className="field">Nombre<input autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
+            <label className="field">Categoría<input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></label>
+            <label className="field">Código de barras
               <span className="inline">
-                <span>{formatClp(product.priceClp)}<small> con IVA</small></span>
-                <button className="btn ghost sm" title="Editar el precio de venta" onClick={() => setPriceFor(product)}>✏️ Editar</button>
+                <input value={f.barcode} onChange={(e) => setF({ ...f, barcode: e.target.value })} placeholder="Escanéalo o déjalo vacío" />
+                <button type="button" className="btn ghost sm" onClick={async () => { try { setF({ ...f, barcode: await api.rpc.nextInternalCode() }); } catch (e) { setError(msg(e)); } }}>Sin código: asignar uno</button>
               </span>
-            </td>
-            <td>
-              <button className="btn ghost sm" disabled={!product.published} onClick={() => run(() => api.rpc.moveStock(branchId!, product.id, 'physical', 'online', 5))}>→ Online</button>{' '}
-              <button className="btn ghost sm" onClick={() => run(() => api.rpc.moveStock(branchId!, product.id, 'online', 'physical', 5))}>→ Caja</button>
-            </td>
-            <td><span className="inline"><input className="num" inputMode="numeric" placeholder="±n" value={adj[product.id] ?? ''} onChange={(e) => setAdj({ ...adj, [product.id]: e.target.value })} />
-              <button className="btn ghost sm" disabled={!Number(adj[product.id])} onClick={() => run(async () => { await api.rpc.adjustStock(branchId!, product.id, 'physical', Number(adj[product.id])); setAdj({ ...adj, [product.id]: '' }); })}>OK</button></span></td>
-          </tr>))}</tbody>
+            </label>
+            <label className="field">Precio de venta (con IVA)
+              <input inputMode="numeric" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} />
+              <small>Neto {formatClp(splitIva(Number(f.price.replace(/\D/g, '')) || 0).netClp)}</small>
+            </label>
+            <label className="field">Costo unitario (con IVA)
+              <input inputMode="numeric" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
+              <small>Neto {formatClp(splitIva(Number(f.cost.replace(/\D/g, '')) || 0).netClp)}</small>
+            </label>
+            <label className="check"><input type="checkbox" checked={f.published} onChange={(e) => setF({ ...f, published: e.target.checked })} /> Visible en la tienda web</label>
+            <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Activo (se puede vender)</label>
+          </div>
+          <Err text={error} />
+          <div className="row-btns"><button className="btn primary" onClick={saveProduct}>Guardar</button><button className="btn ghost" onClick={() => setOpen(false)}>Cancelar</button></div>
+        </div>
+      )}
+      {!open && <Err text={error} />}
+      <div className="toolbar"><input className="search" placeholder="Buscar por nombre o código…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Buscar en el inventario" /></div>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Producto</th><th>En la caja</th><th>En la web</th><th>Precio de venta</th><th>Ajustar caja</th><th /></tr></thead>
+        <tbody>{shown.map(({ product, physical, online }) => {
+          const target = web[product.id];
+          const changed = target !== undefined && target !== '' && Number(target) !== online.qty;
+          return (
+            <tr key={product.id}>
+              <td>
+                <button className="link-btn" title="Ver tarjeta de existencia" onClick={() => setCardFor(product)}>{product.name}</button>
+                {!product.active && <span className="tag">inactivo</span>}
+                <br /><small>{product.barcode}</small>
+              </td>
+              <td>{physical.qty}{physical.reserved > 0 && <small> ({physical.reserved} res.)</small>}</td>
+              <td>
+                <label className="check" style={{ marginBottom: 4 }}>
+                  <input type="checkbox" checked={product.published} onChange={(e) => setVisible(product, e.target.checked)} /> Visible
+                </label>
+                {product.published && (
+                  <span className="inline">
+                    <input className="num" inputMode="numeric" aria-label={`Unidades en la web de ${product.name}`} value={target ?? String(online.qty)}
+                      onChange={(e) => setWeb({ ...web, [product.id]: e.target.value.replace(/\D/g, '') })}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && changed) run(async () => { await api.rpc.setWebStock(branchId!, product.id, Number(target)); setWeb((w) => { const { [product.id]: _x, ...rest } = w; return rest; }); }); }} />
+                    <button className="btn primary sm" disabled={!changed}
+                      onClick={() => run(async () => { await api.rpc.setWebStock(branchId!, product.id, Number(target)); setWeb((w) => { const { [product.id]: _x, ...rest } = w; return rest; }); })}>Guardar</button>
+                  </span>
+                )}
+                {online.reserved > 0 && <small> ({online.reserved} res.)</small>}
+              </td>
+              <td>
+                <span className="inline">
+                  <span>{formatClp(product.priceClp)}<small> con IVA</small></span>
+                  <button className="btn ghost sm" title="Editar el precio de venta" onClick={() => setPriceFor(product)}>✏️ Precio</button>
+                </span>
+              </td>
+              <td><span className="inline"><input className="num" inputMode="numeric" placeholder="±n" value={adj[product.id] ?? ''} onChange={(e) => setAdj({ ...adj, [product.id]: e.target.value })} />
+                <button className="btn ghost sm" disabled={!Number(adj[product.id])} onClick={() => run(async () => { await api.rpc.adjustStock(branchId!, product.id, 'physical', Number(adj[product.id])); setAdj({ ...adj, [product.id]: '' }); })}>OK</button></span></td>
+              <td><button className="btn ghost sm" onClick={() => edit(product)}>Editar datos</button></td>
+            </tr>
+          );
+        })}
+          {!shown.length && <tr><td colSpan={6} className="empty">{rows.length ? 'Ningún producto coincide con la búsqueda' : 'Aún no hay productos: ingresa mercadería para empezar'}</td></tr>}</tbody>
       </table></div>
       {cardFor && branchId && <StockCardModal api={api} branchId={branchId} product={cardFor} onClose={() => setCardFor(null)} onChanged={() => { load().catch(() => undefined); }} />}
       {priceFor && <PriceModal api={api} product={priceFor} onClose={() => setPriceFor(null)} onSaved={() => { load().catch(() => undefined); }} />}

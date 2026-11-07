@@ -1351,3 +1351,46 @@ describe('corregir el precio de venta con IVA', () => {
     expect(() => e.setProductSalePrice('nope', 100)).toThrow(PosError);
   });
 });
+
+describe('cantidad exacta en la web y código interno', () => {
+  it('setWebStock deja la cantidad digitada en la web, sin perder unidades', () => {
+    const e = make();
+    const total = () => e.available(B, COLA, 'physical') + e.available(B, COLA, 'online');
+    const antes = total();
+    const r = e.setWebStock(B, COLA, 7);
+    expect(r.online).toBe(7);
+    expect(e.available(B, COLA, 'online')).toBe(7);
+    expect(total()).toBe(antes);
+    expect(e.setWebStock(B, COLA, 2).online).toBe(2);
+    expect(total()).toBe(antes);
+    expect(e.setWebStock(B, COLA, 0).online).toBe(0);
+  });
+
+  it('no deja mostrar más de lo que hay libre en la caja ni bajar de lo reservado', () => {
+    const e = make();
+    e.setWebStock(B, COLA, 3);
+    const c = e.createCart(B, 'online'); e.cartAdd(c.id, COLA, 2); // 2 reservadas en la web
+    expect(() => e.setWebStock(B, COLA, 1)).toThrow(/reservada/);
+    expect(e.setWebStock(B, COLA, 2).online).toBe(2);
+    expect(() => e.setWebStock(B, COLA, 9_999)).toThrow(/solo hay/);
+    expect(() => e.setWebStock(B, COLA, -1)).toThrow(PosError);
+    expect(() => e.setWebStock(B, COLA, 1.5)).toThrow(PosError);
+    expect(() => e.setWebStock(B, 'nope', 1)).toThrow(PosError);
+  });
+
+  it('un producto no publicado no se puede ofrecer en la web', () => {
+    const e = make();
+    e.upsertProduct({ id: COLA, name: 'Cola', priceClp: 1990, published: false });
+    expect(() => e.setWebStock(B, COLA, e.available(B, COLA, 'online') + 1)).toThrow(/no está visible/);
+  });
+
+  it('nextInternalCode da el número libre más chico y lo usa un producto sin código', () => {
+    const e = make();
+    expect(e.nextInternalCode()).toBe('1');
+    const r = e.receiveStock(B, { barcode: e.nextInternalCode(), name: 'Pan amasado', priceClp: 1500, quantity: 5 });
+    expect(r.product.barcode).toBe('1');
+    expect(e.nextInternalCode()).toBe('2');
+    e.receiveStock(B, { barcode: '2', name: 'Huevos', priceClp: 300 });
+    expect(e.nextInternalCode()).toBe('3');
+  });
+});

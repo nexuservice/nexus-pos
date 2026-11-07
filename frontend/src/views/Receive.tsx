@@ -71,6 +71,11 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
     }
   };
 
+  /** Producto sin código de barras: el sistema le asigna un número interno (1, 2, 3…) que se puede escribir en la caja. */
+  const withoutBarcode = async () => {
+    try { await scan(await api.rpc.nextInternalCode()); } catch (e) { setError(msg(e)); }
+  };
+
   const save = async () => {
     if (!draft || !branchId) return;
     try {
@@ -96,7 +101,7 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
   return (
     <>
       <div className="page-head"><h2>Ingreso por escaneo</h2></div>
-      <p className="hint">Escanea o escribe el código de barras y presiona Enter. Si el producto no existe, lo creas con su costo y precio; si ya existe, suma stock.</p>
+      <p className="hint">Escanea o escribe el código de barras y presiona Enter. Si el producto no existe, lo creas con su costo y precio; si ya existe, suma stock. Si no trae código, pulsa «Este producto no tiene código de barras»: el sistema le pone un número (1, 2, 3…).</p>
 
       <div className="scan-bar">
         <button type="button" className={`btn ${cam ? 'ghost' : 'primary'} cam-btn`} onClick={() => setCam((v) => !v)}>
@@ -105,6 +110,7 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
         {cam && <CameraScanner paused={!!draft} onCode={(c) => { scan(c); }} />}
         <input ref={inputRef} className="search barcode" placeholder="Escanea el código de barras…" inputMode="numeric" value={code} disabled={!!draft}
           onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && scan()} aria-label="Código de barras" />
+        <button type="button" className="btn ghost" disabled={!!draft} onClick={withoutBarcode}>Este producto no tiene código de barras</button>
         <label className="check"><input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} /> Sumar 1 unidad al escanear un producto que ya existe</label>
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
@@ -137,7 +143,7 @@ export function ReceiveSection({ api, branchId }: { api: PosApi; branchId: strin
             {draft.existing && !more && (
               <button type="button" className="btn ghost" onClick={() => setMore(true)}>Cambiar costo o precio</button>
             )}
-            {!draft.existing && <label className="check"><input type="checkbox" checked={draft.published} onChange={(e) => setDraft({ ...draft, published: e.target.checked })} /> Visible en la tienda online</label>}
+            {!draft.existing && <label className="check"><input type="checkbox" checked={draft.published} onChange={(e) => setDraft({ ...draft, published: e.target.checked })} /> Visible en la tienda web</label>}
           </div>
           {belowCost && <div className="alert" role="alert">El precio de venta queda bajo el costo: venderías con pérdida.</div>}
           <div className="row-btns">

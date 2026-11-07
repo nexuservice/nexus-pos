@@ -49,8 +49,8 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
         <h1>🧾 Historial de ventas</h1>
         <div className="head-actions">
           <button className="btn ghost sm" onClick={() => download('historial.csv', toCsv([
-            ['Pedido N°', 'Fecha', 'Hora', 'Cajero', 'Canal', 'Medio', 'Total', 'Estado'],
-            ...rows.map((r) => [r.number, fmtDate(r.paidAt), fmtTime(r.paidAt), r.cashierName ?? '', r.channel === 'online' ? 'Online' : 'Caja', PAY_METHOD_LABEL[r.method], r.totalClp, r.status === 'voided' ? 'Anulada' : 'Completada']),
+            ['Pedido N°', 'Fecha', 'Hora', 'Cajero', 'Origen', 'Medio', 'Total', 'Estado'],
+            ...rows.map((r) => [r.number, fmtDate(r.paidAt), fmtTime(r.paidAt), r.cashierName ?? '', r.channel === 'online' ? 'Web' : 'Caja', PAY_METHOD_LABEL[r.method], r.totalClp, r.status === 'voided' ? 'Anulada' : 'Completada']),
           ]), 'text/csv;charset=utf-8')}>📗 Excel (CSV)</button>
           <button className="btn ghost sm" onClick={() => download('historial.json', JSON.stringify(rows, null, 2), 'application/json')}>🧾 JSON</button>
         </div>
@@ -69,11 +69,11 @@ export function HistoryView({ api, branchId }: { api: PosApi; branchId: string |
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
       <div className="table-wrap"><table>
-        <thead><tr><th>Fecha</th><th>Hora</th><th>Pedido</th><th>Canal</th><th>Medio</th><th>Total</th><th>Estado</th><th /></tr></thead>
+        <thead><tr><th>Fecha</th><th>Hora</th><th>Pedido</th><th>Origen</th><th>Medio</th><th>Total</th><th>Estado</th><th /></tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className={r.status === 'voided' ? 'voided' : ''}>
-              <td>{fmtDate(r.paidAt)}</td><td>{fmtTime(r.paidAt)}</td><td>#{r.number}</td><td>{r.channel === 'online' ? 'Online' : r.cashierName ?? 'Caja'}</td>
+              <td>{fmtDate(r.paidAt)}</td><td>{fmtTime(r.paidAt)}</td><td>#{r.number}</td><td>{r.channel === 'online' ? 'Web' : r.cashierName ?? 'Caja'}</td>
               <td>{PAY_METHOD_LABEL[r.method]}</td><td>{formatClp(r.totalClp)}</td>
               <td><span className={'pill ' + (r.status === 'completed' ? 'ok' : 'bad')}>{r.status === 'completed' ? 'completada' : 'anulada'}</span></td>
               <td><button className="btn ghost sm" onClick={() => open(r.id)}>Ver comprobante</button></td>

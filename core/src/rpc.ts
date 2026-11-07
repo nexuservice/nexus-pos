@@ -3,13 +3,13 @@
  * Los de lectura no persisten el estado; los de escritura sí.
  */
 export const READ_METHODS = [
-  'branches', 'catalog', 'listProducts', 'inventory', 'movements', 'stockCard', 'listClients', 'searchClients', 'clientBalance', 'listConsumptions', 'listPurchases', 'listSuppliers', 'listCashiers',
+  'branches', 'catalog', 'listProducts', 'inventory', 'nextInternalCode', 'movements', 'stockCard', 'listClients', 'searchClients', 'clientBalance', 'listConsumptions', 'listPurchases', 'listSuppliers', 'listCashiers',
   'listPromotions', 'activePromotions', 'getCart', 'nextOrderNumber', 'currentShift', 'shiftInfo', 'listShifts', 'openShifts', 'verifyShiftPin',
   'getPayment', 'getBusiness', 'findProduct', 'getSale', 'listSales', 'listTickets', 'salesReport', 'snapshot',
 ] as const;
 
 export const WRITE_METHODS = [
-  'upsertProduct', 'adjustStock', 'moveStock', 'upsertClient', 'deleteClient', 'upsertCashier', 'upsertPromotion',
+  'upsertProduct', 'adjustStock', 'moveStock', 'setWebStock', 'upsertClient', 'deleteClient', 'upsertCashier', 'upsertPromotion',
   'deletePromotion', 'applyPromo', 'removePromo', 'createCart', 'cartAdd', 'cartSetQuantity', 'cartRemove', 'cartClear',
   'setCustomer', 'openShift', 'closeShift', 'assignCartShift', 'cancelPayment', 'voidSale', 'holdCart', 'createPaidTicket', 'resumeTicket',
   'completeTicket', 'cancelTicket', 'payClientDebt', 'registerConsumption', 'voidConsumption', 'registerPurchase', 'voidPurchase', 'setProductPrice', 'setProductSalePrice', 'updateBusiness', 'receiveStock',

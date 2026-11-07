@@ -68,7 +68,7 @@ export function printHtml(html: string, page: 'ticket' | 'sheet' = 'ticket'): vo
 export function comandaHtml(t: Ticket, business = businessName()): string {
   const lines = t.lines.map((l) => `<div class="r"><span>${l.quantity} × ${esc(l.name)}</span><span>${formatClp(l.unitPriceClp * l.quantity)}</span></div>`).join('');
   return `<h1>${esc(business)} · COMANDA #${t.number}</h1><div>${esc(fmtDateTime(t.createdAt))}</div><hr>
-    <div><b>${esc(t.customerName)}</b></div>${t.phone ? `<div>Tel: ${esc(t.phone)}</div>` : ''}<div>Canal: ${esc(CHANNEL_LABEL[t.channel])}</div>
+    <div><b>${esc(t.customerName)}</b></div>${t.phone ? `<div>Tel: ${esc(t.phone)}</div>` : ''}<div>Origen: ${esc(CHANNEL_LABEL[t.channel])}</div>
     ${t.note ? `<div>Obs.: ${esc(t.note)}</div>` : ''}<hr>${lines}<hr><div class="r"><b>Total</b><b>${formatClp(t.totalClp)}</b></div>
     <div>${t.paid ? 'PAGADO' : 'PENDIENTE DE PAGO'}</div>`;
 }

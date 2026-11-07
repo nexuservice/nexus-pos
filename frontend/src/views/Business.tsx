@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Business } from '@nexus/core';
 import type { PosApi } from '../api';
-import { setPrintBusiness } from '../format';
+import { download, setPrintBusiness } from '../format';
 import { msg } from '../hooks';
 
 /** Datos de la empresa: salen en el encabezado de los comprobantes de venta. */
@@ -58,6 +58,12 @@ export function BusinessSection({ api, storeSlug }: { api: PosApi; storeSlug?: s
           {saved && <span className="pill ok">Guardado</span>}
           <button className="btn primary" onClick={save}>Guardar</button>
         </div>
+      </div>
+
+      <h3 className="section-title">Copia de seguridad</h3>
+      <p className="hint">Descarga una copia de todos los datos de tu negocio (productos, ventas, clientes). Guárdala en un lugar seguro, por ejemplo tu correo o un pendrive: es tu respaldo propio, por si algún día lo necesitas.</p>
+      <div className="row-btns">
+        <button className="btn ghost" onClick={async () => { try { download(`nexus-respaldo-${new Date().toISOString().slice(0, 10)}.json`, await api.backup(), 'application/json'); } catch (e) { setError(msg(e)); } }}>⬇️ Descargar copia de mis datos</button>
       </div>
     </>
   );

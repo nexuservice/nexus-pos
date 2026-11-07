@@ -206,6 +206,14 @@ export class PosEngine {
     return clone(p);
   }
 
+  /** Código interno para un producto sin código de barras: el número más chico libre (1, 2, 3…), que no choca con un código real. */
+  nextInternalCode(): string {
+    const used = new Set(this.state.products.flatMap((p) => [p.barcode, p.sku].filter(Boolean)));
+    let n = 1;
+    while (used.has(String(n))) n++;
+    return String(n);
+  }
+
   inventory(branchId: string): InventoryRow[] {
     return this.state.products.map((product) => ({
       product: { ...product },
@@ -224,6 +232,33 @@ export class PosEngine {
     this.state.movements.push({
       id: this.id('mov'), branchId, productId: p.id, channel, delta, reason: 'adjustment', at: this.now().toISOString(), ...this.snap(p.id),
     });
+  }
+
+  /**
+   * Deja la cantidad EXACTA que se muestra y se vende en la tienda web: pasa de la caja a la web (o devuelve a la caja)
+   * la diferencia. No toca lo que ya está reservado por pedidos, y para mostrar un producto en la web debe estar publicado.
+   */
+  setWebStock(branchId: string, productId: string, quantity: number): { physical: number; online: number } {
+    const p = this.product(productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 1_000_000) throw new PosError('INVALID_QTY', 'La cantidad en la web debe ser un número entero de 0 o más');
+    const web = this.cell(branchId, p.id, 'online');
+    const shop = this.cell(branchId, p.id, 'physical');
+    if (quantity > web.qty) {
+      if (!p.published) throw new PosError('NOT_ALLOWED', `${p.name} no está visible en la web: actívalo para ofrecerlo`);
+      const need = quantity - web.qty;
+      if (shop.qty - shop.reserved < need) {
+        throw new PosError('INSUFFICIENT_STOCK', `En la caja solo hay ${Math.max(0, shop.qty - shop.reserved)} disponibles para pasar a la web`);
+      }
+      this.moveStock(branchId, p.id, 'physical', 'online', need);
+    } else if (quantity < web.qty) {
+      const back = web.qty - quantity;
+      if (web.qty - web.reserved < back) {
+        throw new PosError('INSUFFICIENT_STOCK', `${web.reserved} unidad(es) de la web están reservadas por pedidos: no puedes dejar menos de ${web.reserved}`);
+      }
+      this.moveStock(branchId, p.id, 'online', 'physical', back);
+    }
+    return { physical: shop.qty, online: web.qty };
   }
 
   /** Mueve stock entre canales (p. ej. del local a la tienda online) sin perder unidades. */

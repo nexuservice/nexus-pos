@@ -321,7 +321,7 @@ export function HoldModal(props: { summary: string; defaultName: string; onSave:
         <label className="field">Teléfono / WhatsApp<input placeholder="+56 9 …" value={d.phone} onChange={(e) => set({ phone: e.target.value })} /></label>
         <label className="field">Correo<input type="email" placeholder="opcional" value={d.email} onChange={(e) => set({ email: e.target.value })} /></label>
       </div>
-      <label className="field">Canal
+      <label className="field">¿Cómo llegó el pedido?
         <select value={d.channel} onChange={(e) => set({ channel: e.target.value as TicketChannel })}>
           {(Object.keys(CHANNEL_LABEL) as TicketChannel[]).map((c) => <option key={c} value={c}>{CHANNEL_LABEL[c]}</option>)}
         </select>
@@ -401,7 +401,7 @@ export function TicketsModal(props: { api: PosApi; onResume: (t: Ticket) => void
         </div>
       ) : (
         <div className="table-wrap"><table>
-          <thead><tr><th>N°</th><th>Cliente</th><th>Canal</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead>
+          <thead><tr><th>N°</th><th>Cliente</th><th>Origen</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody>{shown.map((t) => (
             <tr key={t.id}><td>#{t.number}</td><td>{t.customerName}</td><td>{CHANNEL_LABEL[t.channel]}</td><td>{formatClp(t.totalClp)}</td>
               <td>{t.paid ? 'Pagado' : 'Pendiente'}</td><td>{actions(t)}</td></tr>))}</tbody>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_URL, clearSession, createHttpApi, loadSession, saveSession, type PosApi, type Session } from './api';
 import { Dropdown } from './components';
 import { clampScale, SettingsProvider, useSettings } from './settings';
-import { download, setPrintBusiness } from './format';
+import { setPrintBusiness } from './format';
 import { ActiveShiftProvider, clearActiveShift } from './activeShift';
 import { PosView } from './views/Pos';
 import { StoreView } from './views/Store';
@@ -41,16 +41,24 @@ function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick: (
   return <button className="dd-item" role="switch" aria-checked={on} onClick={onClick}><span>{label}</span><i className={'dot' + (on ? ' on' : '')} /></button>;
 }
 
-function Stepper({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+const SIZES: [string, number][] = [['Normal', 100], ['Grande', 115], ['Extra grande', 130]];
+
+/** Un solo selector de tamaño (letra y botones juntos), en vez de dos reguladores. */
+function SizePicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
-    <div className="dd-item"><span>{label}</span>
-      <span className="stepper"><button aria-label={`Reducir ${label}`} onClick={() => onChange(clampScale(value - 10))}>−</button><b>{value}%</b><button aria-label={`Aumentar ${label}`} onClick={() => onChange(clampScale(value + 10))}>+</button></span>
+    <div className="dd-item static">
+      <span>Tamaño</span>
+      <span className="inline" role="group" aria-label="Tamaño de letra y botones">
+        {SIZES.map(([label, v]) => (
+          <button key={v} type="button" className={'btn sm ' + (value === v ? 'primary' : 'ghost')} aria-pressed={value === v} onClick={() => onChange(v)}>{label}</button>
+        ))}
+      </span>
     </div>
   );
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(title === 'Pantalla');
+  const [open, setOpen] = useState(title === 'Apariencia');
   return (
     <div className="dd-group">
       <button className="dd-group-title" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} {title}</button>
@@ -73,30 +81,24 @@ function SettingsMenu(props: { api: PosApi; go: (t: Tab) => void; onLogout: () =
     <Dropdown label="⚙️" align="right" className="settings">
       {(close) => (
         <div className="settings-menu">
-          <Group title="Pantalla">
+          <Group title="Apariencia">
             <Toggle on={dark} label="Tema oscuro" onClick={() => set({ theme: dark ? 'light' : 'dark' })} />
+            <SizePicker value={prefs.fontScale} onChange={(v) => set({ fontScale: v, btnScale: v })} />
             <Toggle on={fullscreen} label="Pantalla completa" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())} />
-            <Toggle on={prefs.headerInfo} label="Ver info superior" onClick={() => set({ headerInfo: !prefs.headerInfo })} />
-            <Toggle on={prefs.payAlways} label="Formas de pago siempre visibles" onClick={() => set({ payAlways: !prefs.payAlways })} />
+          </Group>
+          <Group title="Caja">
+            <Toggle on={prefs.showSearch} label="Buscador de productos" onClick={() => set({ showSearch: !prefs.showSearch })} />
+            <Toggle on={prefs.showBarcode} label="Código de barras y cámara" onClick={() => set({ showBarcode: !prefs.showBarcode })} />
+            <Toggle on={prefs.showAll} label="Botón «Todos» en las categorías" onClick={() => set({ showAll: !prefs.showAll })} />
+            <Toggle on={prefs.headerInfo} label="Datos de la jornada arriba" onClick={() => set({ headerInfo: !prefs.headerInfo })} />
+            <Toggle on={prefs.payAlways} label="Formas de pago a la vista" onClick={() => set({ payAlways: !prefs.payAlways })} />
             <Toggle on={prefs.compactCart} label="Detalle de venta compacto" onClick={() => set({ compactCart: !prefs.compactCart })} />
-            <Stepper label="Tamaño botones" value={prefs.btnScale} onChange={(v) => set({ btnScale: v })} />
-            <Stepper label="Tamaño fuente" value={prefs.fontScale} onChange={(v) => set({ fontScale: v })} />
-            <div className="dd-item static"><span>Resolución</span><b>{window.innerWidth}×{window.innerHeight}</b></div>
           </Group>
-          <Group title="Catálogo">
-            <Toggle on={prefs.showSearch} label="Buscar productos" onClick={() => set({ showSearch: !prefs.showSearch })} />
-            <Toggle on={prefs.showBarcode} label="Código de barras" onClick={() => set({ showBarcode: !prefs.showBarcode })} />
-            <Toggle on={prefs.showAll} label="Ver todos los productos" onClick={() => set({ showAll: !prefs.showAll })} />
-          </Group>
-          <Group title="Sistema">
-            <button className="dd-item" onClick={async () => { close(); download(`nexus-respaldo-${new Date().toISOString().slice(0, 10)}.json`, await props.api.backup(), 'application/json'); }}>Respaldar base de datos</button>
-            <button className="dd-item" onClick={() => location.reload()}>Recargar</button>
-            <button className="dd-item" onClick={() => { close(); props.onLogout(); }}>Cerrar sesión</button>
-          </Group>
-          <Group title="Gestión">
+          <Group title="Ir a">
             {TABS.filter((t) => ['admin', 'panel', 'history', 'help'].includes(t.id)).map((t) => (
               <button key={t.id} className="dd-item" onClick={() => { close(); props.go(t.id); }}>{t.label}</button>
             ))}
+            <button className="dd-item" onClick={() => { close(); props.onLogout(); }}>Cerrar sesión</button>
           </Group>
         </div>
       )}
