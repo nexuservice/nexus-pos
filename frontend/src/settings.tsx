@@ -14,7 +14,7 @@ export interface Prefs {
 }
 
 const DEFAULTS: Prefs = {
-  theme: 'auto', headerInfo: true, payAlways: true, compactCart: false, btnScale: 100, fontScale: 100,
+  theme: 'light', headerInfo: true, payAlways: true, compactCart: false, btnScale: 100, fontScale: 100,
   showSearch: true, showBarcode: true, showAll: true,
 };
 const KEY = 'nexus-prefs';

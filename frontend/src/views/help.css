@@ -1,0 +1,43 @@
+/* Manual de ayuda: solo lo que no existe ya en styles.css. Usa variables del tema (claro y oscuro). */
+.help-sec {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  margin: 12px 0; padding: 0 18px 14px;
+}
+.help-sec > summary {
+  cursor: pointer; font-weight: 800; font-size: 1.05rem; padding: 14px 0; list-style: none;
+  display: flex; align-items: center; gap: 8px;
+}
+.help-sec > summary::-webkit-details-marker { display: none; }
+.help-sec > summary::after { content: '▸'; margin-left: auto; color: var(--muted); }
+.help-sec[open] > summary::after { content: '▾'; }
+.help-sec[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.help-sec h3 { font-size: 15px; margin: 16px 0 6px; }
+.help-sec ol, .help-sec ul { padding-left: 20px; }
+.help-sec li { margin-bottom: 4px; }
+.help-sec p { margin: 6px 0; }
+
+.help-steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.help-step {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start;
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--bg);
+}
+.help-step input[type=checkbox] { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--brand); }
+.help-step strong { display: block; }
+.help-step p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.help-step.done strong { text-decoration: line-through; color: var(--muted); }
+.help-progress { font-weight: 700; color: var(--brand); margin: 0 0 10px; }
+
+.help-warn {
+  border-left: 4px solid var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  padding: 10px 12px; border-radius: 10px;
+}
+.help-warn p { margin: 0; }
+
+.help-gloss { display: grid; gap: 10px; margin: 0; }
+.help-gloss dt { font-weight: 800; }
+.help-gloss dd { margin: 2px 0 0; color: var(--muted); }
+
+@media (max-width: 560px) {
+  .help-step { grid-template-columns: auto 1fr; }
+  .help-step .btn { grid-column: 2; justify-self: start; }
+}

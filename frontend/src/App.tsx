@@ -41,7 +41,7 @@ function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick: (
   return <button className="dd-item" role="switch" aria-checked={on} onClick={onClick}><span>{label}</span><i className={'dot' + (on ? ' on' : '')} /></button>;
 }
 
-const SIZES: [string, number][] = [['Normal', 100], ['Grande', 115], ['Extra grande', 130]];
+const SIZES: [string, number][] = [['Normal', 100], ['Grande', 115], ['Extra', 130]];
 
 /** Un solo selector de tamaño (letra y botones juntos), en vez de dos reguladores. */
 function SizePicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
@@ -202,7 +202,7 @@ function Shell({ session, base, onLogout }: { session: Session; base: string; on
         {tab === 'panel' && <PanelView api={api} branchId={branchId} />}
         {tab === 'history' && <HistoryView api={api} branchId={branchId} />}
         {tab === 'admin' && <AdminView api={api} branchId={branchId} storeSlug={webStore ? slug : null} />}
-        {tab === 'help' && <HelpView />}
+        {tab === 'help' && <HelpView go={go} />}
       </main>
     </div>
     </ActiveShiftProvider>
