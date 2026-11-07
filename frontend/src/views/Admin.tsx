@@ -172,7 +172,7 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [adj, setAdj] = useState<Record<string, string>>({});
-  const [web, setWeb] = useState<Record<string, string>>({});
+  const [reserve, setReserve] = useState<Record<string, string>>({});
   const [cardFor, setCardFor] = useState<Product | null>(null);
   const [priceFor, setPriceFor] = useState<Product | null>(null);
   const [f, setF] = useState<typeof blankProduct & { id?: string }>(blankProduct);
@@ -200,6 +200,7 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
   };
   const setVisible = (p: Product, published: boolean) =>
     run(() => api.rpc.upsertProduct({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, priceClp: p.priceClp, costClp: p.costClp, published, active: p.active }));
+  const legacyWeb = rows.reduce((n, r) => n + r.online.qty, 0);
   const shown = rows.filter(({ product }) => !query.trim() || product.name.toLowerCase().includes(query.trim().toLowerCase()) || product.barcode.includes(query.trim()));
 
   return (
@@ -209,8 +210,9 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
         <div className="head-actions"><button className="btn primary sm" onClick={() => { setError(null); setF(blankProduct); setOpen(true); }}>➕ Nuevo producto</button></div>
       </div>
       <p className="hint">
-        <b>En la caja</b> es lo que tienes para vender en el local. <b>En la web</b> es lo que ofreces en tu tienda web: escribe la cantidad y pulsa <b>Guardar</b> (se pasa desde la caja; si bajas el número, vuelve a la caja).
-        Toca el nombre de un producto para ver su tarjeta de existencia. Un producto nuevo parte sin unidades: ingrésalas en <b>Ingresar mercadería</b>.
+        Tu tienda web muestra <b>todo el stock que tienes en la caja</b>, y lo que se pide por la web se reserva solo. Si quieres guardar unidades para vender en el local,
+        escribe cuántas en <b>Dejar en el local</b> y la web ofrecerá el resto. Toca el nombre de un producto para ver su tarjeta de existencia.
+        Un producto nuevo parte sin unidades: ingrésalas en <b>Ingresar mercadería</b>.
       </p>
       {open && (
         <div className="inline-form">
@@ -240,12 +242,21 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
         </div>
       )}
       {!open && <Err text={error} />}
+      {legacyWeb > 0 && (
+        <div className="alert" role="status">
+          Hay {legacyWeb} unidad(es) separadas para la web desde el sistema anterior, que ya no se ofrecen. Pásalas a la caja para que se vendan.{' '}
+          <button className="btn primary sm" onClick={() => run(() => api.rpc.moveAllWebToShop(branchId!))}>Pasar todo a la caja</button>
+        </div>
+      )}
       <div className="toolbar"><input className="search" placeholder="Buscar por nombre o código…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Buscar en el inventario" /></div>
       <div className="table-wrap"><table>
         <thead><tr><th>Producto</th><th>En la caja</th><th>En la web</th><th>Precio de venta</th><th>Ajustar caja</th><th /></tr></thead>
         <tbody>{shown.map(({ product, physical, online }) => {
-          const target = web[product.id];
-          const changed = target !== undefined && target !== '' && Number(target) !== online.qty;
+          const target = reserve[product.id];
+          const saved = product.webReserveQty ?? 0;
+          const changed = target !== undefined && target !== '' && Number(target) !== saved;
+          const shownOnWeb = Math.max(0, physical.qty - physical.reserved - saved);
+          const saveReserve = () => run(async () => { await api.rpc.setWebReserve(product.id, Number(target)); setReserve((r) => { const { [product.id]: _x, ...rest } = r; return rest; }); });
           return (
             <tr key={product.id}>
               <td>
@@ -256,18 +267,20 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
               <td>{physical.qty}{physical.reserved > 0 && <small> ({physical.reserved} res.)</small>}</td>
               <td>
                 <label className="check" style={{ marginBottom: 4 }}>
-                  <input type="checkbox" checked={product.published} onChange={(e) => setVisible(product, e.target.checked)} /> Visible
+                  <input type="checkbox" checked={product.published} onChange={(e) => setVisible(product, e.target.checked)} /> Visible en la web
                 </label>
-                {product.published && (
-                  <span className="inline">
-                    <input className="num" inputMode="numeric" aria-label={`Unidades en la web de ${product.name}`} value={target ?? String(online.qty)}
-                      onChange={(e) => setWeb({ ...web, [product.id]: e.target.value.replace(/\D/g, '') })}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && changed) run(async () => { await api.rpc.setWebStock(branchId!, product.id, Number(target)); setWeb((w) => { const { [product.id]: _x, ...rest } = w; return rest; }); }); }} />
-                    <button className="btn primary sm" disabled={!changed}
-                      onClick={() => run(async () => { await api.rpc.setWebStock(branchId!, product.id, Number(target)); setWeb((w) => { const { [product.id]: _x, ...rest } = w; return rest; }); })}>Guardar</button>
-                  </span>
-                )}
-                {online.reserved > 0 && <small> ({online.reserved} res.)</small>}
+                {product.published ? (
+                  <>
+                    <div><b>{shownOnWeb}</b> <small>se ofrecen en la web</small></div>
+                    <span className="inline">
+                      <small>Dejar en el local:</small>
+                      <input className="num" inputMode="numeric" aria-label={`Unidades que dejas en el local de ${product.name}`} value={target ?? String(saved)}
+                        onChange={(e) => setReserve({ ...reserve, [product.id]: e.target.value.replace(/\D/g, '') })}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && changed) saveReserve(); }} />
+                      <button className="btn ghost sm" disabled={!changed} onClick={saveReserve}>Guardar</button>
+                    </span>
+                  </>
+                ) : <small>Oculto en la web</small>}
               </td>
               <td>
                 <span className="inline">

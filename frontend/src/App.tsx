@@ -17,7 +17,6 @@ import { PublicStoreView } from './views/PublicStoreView';
 type Tab = 'pos' | 'store' | 'panel' | 'history' | 'admin' | 'help';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'pos', label: 'Caja' },
-  { id: 'store', label: 'Tienda online' },
   { id: 'panel', label: 'Panel' },
   { id: 'history', label: 'Historial' },
   { id: 'admin', label: 'Administración' },

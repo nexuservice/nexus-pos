@@ -488,7 +488,6 @@ describe('compras a proveedores', () => {
     const e = mk();
     const products = e.listProducts().length;
     const buy = (over: object) => () => e.registerPurchase({ ...base, lines: [{ productId: COLA, quantity: 5, unitCostClp: 1000 }], ...over });
-    expect(buy({ supplierName: '  ' })).toThrow(/proveedor/);
     expect(buy({ supplierRut: '11.111.111-9' })).toThrow(/RUT/);
     expect(buy({ docNumber: ' ' })).toThrow(/número/);
     expect(buy({ docDate: '2026-13-45' })).toThrow(/Fecha/);
@@ -1157,35 +1156,58 @@ describe('API remota (RPC)', () => {
 
 describe('tienda web pública', () => {
   const cliente = { customerName: 'Ana Pérez', phone: '+56 9 1234 5678' };
+  const caja = (e: PosEngine, id = COLA) => e.available(B, id, 'physical');
 
-  it('el catálogo público no expone costos ni códigos internos y usa el stock online', () => {
+  it('el catálogo público no expone costos ni códigos internos y muestra el stock real de la caja', () => {
     const e = make();
     const cat = e.publicCatalog();
     expect(cat.length).toBeGreaterThan(0);
     for (const p of cat) {
       expect(Object.keys(p).sort()).toEqual(['available', 'category', 'id', 'name', 'priceClp']);
-      expect(p.available).toBe(e.available(B, p.id, 'online'));
+      expect(p.available).toBe(e.available(B, p.id, 'physical'));
     }
   });
 
-  it('un pedido web reserva el stock online y queda abierto sin pagar', () => {
+  it('un pedido web reserva el stock de la caja y queda abierto sin pagar', () => {
     const e = make();
-    const antes = e.available(B, COLA, 'online');
+    const antes = caja(e);
     const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 2 }] });
     expect(t.channel).toBe('web');
     expect(t.paid).toBe(false);
     expect(t.totalClp).toBe(1990 * 2);
-    expect(e.available(B, COLA, 'online')).toBe(antes - 2);
+    expect(caja(e)).toBe(antes - 2);
     expect(e.publicCatalog().find((p) => p.id === COLA)!.available).toBe(antes - 2);
+  });
+
+  it('lo que el negocio guarda para el local no se ofrece en la web', () => {
+    const e = make();
+    const total = caja(e);
+    e.setWebReserve(COLA, 5);
+    expect(e.publicCatalog().find((p) => p.id === COLA)!.available).toBe(total - 5);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: total - 4 }] })).toThrow(/Sin stock/);
+    e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: total - 5 }] });
+    expect(e.publicCatalog().find((p) => p.id === COLA)!.available).toBe(0);
+    expect(caja(e)).toBe(5); // el local conserva sus unidades
+    e.setWebReserve(COLA, 0);
+    expect(() => e.setWebReserve(COLA, -1)).toThrow(PosError);
+    expect(() => e.setWebReserve(COLA, 1.5)).toThrow(PosError);
+    expect(() => e.setWebReserve('nope', 1)).toThrow(PosError);
   });
 
   it('es todo o nada: si un producto no alcanza no queda nada reservado', () => {
     const e = make();
-    const cola = e.available(B, COLA, 'online');
+    const cola = caja(e);
     expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }, { productId: AGUA, quantity: 9999 }] }))
       .toThrow(PosError);
-    expect(e.available(B, COLA, 'online')).toBe(cola);
+    expect(caja(e)).toBe(cola);
     expect(e.listTickets()).toHaveLength(0);
+  });
+
+  it('un producto oculto en la web no se puede pedir', () => {
+    const e = make();
+    e.upsertProduct({ id: COLA, name: 'Cola', priceClp: 1990, published: false });
+    expect(e.publicCatalog().some((p) => p.id === COLA)).toBe(false);
+    expect(() => e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] })).toThrow(/no encontrado/i);
   });
 
   it('valida los datos del cliente y las cantidades', () => {
@@ -1203,32 +1225,32 @@ describe('tienda web pública', () => {
   it('los pedidos web sin pagar vencen y devuelven el stock', () => {
     let hoy = new Date('2026-03-10T12:00:00Z');
     const e = make({}, { now: () => hoy });
-    const antes = e.available(B, COLA, 'online');
+    const antes = caja(e);
     e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 3 }] });
     hoy = new Date('2026-03-10T20:00:00Z');
     expect(e.expireWebOrders()).toBe(0);
     hoy = new Date('2026-03-11T13:00:00Z');
     expect(e.expireWebOrders()).toBe(1);
-    expect(e.available(B, COLA, 'online')).toBe(antes);
+    expect(caja(e)).toBe(antes);
     expect(e.listTickets()).toHaveLength(0);
   });
 
   it('el cajero puede cancelar un pedido web y se libera el stock', () => {
     const e = make();
-    const antes = e.available(B, COLA, 'online');
+    const antes = caja(e);
     const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] });
     e.cancelTicket(t.id);
-    expect(e.available(B, COLA, 'online')).toBe(antes);
+    expect(caja(e)).toBe(antes);
   });
 
-  it('el cajero cobra un pedido web en efectivo, sin correo, y se descuenta el stock online', async () => {
+  it('el cajero cobra un pedido web en efectivo, sin correo, y se descuenta el stock', async () => {
     const e = make();
-    const antes = e.available(B, COLA, 'online');
+    const antes = caja(e);
     const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 2 }] });
     const cart = e.resumeTicket(t.id);
     const paid = await payCart(e, fast(), { cartId: cart.id, method: 'cash', receivedClp: 5000 });
     expect(paid.status).toBe('approved');
-    expect(e.available(B, COLA, 'online')).toBe(antes - 2);
+    expect(caja(e)).toBe(antes - 2);
   });
 
   it('sin jornada abierta no se cobra un pedido web en caja', () => {
@@ -1236,6 +1258,27 @@ describe('tienda web pública', () => {
     const t = e.placeWebOrder({ ...cliente, items: [{ productId: COLA, quantity: 1 }] });
     const cart = e.resumeTicket(t.id);
     expect(() => e.beginPayment(cart.id, 'cash', null, null, 5000)).toThrow(PosError);
+  });
+
+  it('moveAllWebToShop devuelve a la caja lo que quedó en la web del sistema anterior', () => {
+    const e = make();
+    e.setWebStock(B, COLA, 6);
+    const total = caja(e) + e.available(B, COLA, 'online');
+    expect(e.moveAllWebToShop(B)).toBeGreaterThanOrEqual(6);
+    expect(e.available(B, COLA, 'online')).toBe(0);
+    expect(caja(e)).toBe(total);
+  });
+});
+
+describe('compras sin exigir proveedor', () => {
+  const base = { branchId: B, docType: 'factura' as const, docDate: '2026-03-01' };
+  it('sin proveedor la compra queda como «Sin proveedor» y no se sugiere en la lista', () => {
+    const e = make();
+    const p = e.registerPurchase({ ...base, docNumber: '10', lines: [{ productId: COLA, quantity: 1, unitCostClp: 1000 }] });
+    expect(p.supplierName).toBe('Sin proveedor');
+    expect(e.listSuppliers()).toEqual([]);
+    e.registerPurchase({ ...base, supplierName: 'Distribuidora Sur', docNumber: '11', lines: [{ productId: COLA, quantity: 1, unitCostClp: 1000 }] });
+    expect(e.listSuppliers().map((s) => s.name)).toEqual(['Distribuidora Sur']);
   });
 });
 

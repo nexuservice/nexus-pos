@@ -28,6 +28,8 @@ export interface Product {
   costClp: number;
   published: boolean;
   active: boolean;
+  /** Unidades que el negocio guarda para vender en el local: la tienda web ofrece el stock de la caja menos esto. Sin valor = 0. */
+  webReserveQty?: number;
 }
 
 /** Cliente registrado. */
@@ -257,7 +259,8 @@ export interface PurchaseLineInput {
 
 export interface PurchaseInput {
   branchId: string;
-  supplierName: string;
+  /** Opcional: sin nombre la compra queda como «Sin proveedor». */
+  supplierName?: string;
   supplierRut?: string;
   docType?: PurchaseDocType;
   docNumber: string;

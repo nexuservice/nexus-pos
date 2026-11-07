@@ -213,7 +213,7 @@ describe('tienda web pública', () => {
   async function conTienda(slug?: string) {
     await createTenant(PEPE);
     const token = await login(PEPE);
-    const r = await rpc(token, 'receiveStock', 'branch_1', { barcode: '7801', name: 'Leche 1L', category: 'Lácteos', priceNetClp: 1000, costClp: 700, quantity: 5, channel: 'online' });
+    const r = await rpc(token, 'receiveStock', 'branch_1', { barcode: '7801', name: 'Leche 1L', category: 'Lácteos', priceNetClp: 1000, costClp: 700, quantity: 5 });
     await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: true, ...(slug ? { slug } : {}) } });
     return { token, productId: r.body.product.id as string };
   }

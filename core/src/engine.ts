@@ -31,6 +31,9 @@ const WEB_ORDER_MAX_PENDING = 100;
 const WEB_ORDER_MAX_LINES = 30;
 const WEB_ORDER_MAX_QTY = 50;
 
+/** Nombre con que se guarda una compra cuando no se indica proveedor. */
+export const NO_SUPPLIER = 'Sin proveedor';
+
 export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number }
 export interface WebOrderInput {
   items: { productId: string; quantity: number }[];
@@ -913,8 +916,7 @@ export class PosEngine {
   registerPurchase(input: PurchaseInput): Purchase {
     const today = santiagoDay(this.now().toISOString());
     if (!this.state.branches.some((b) => b.id === input.branchId)) throw new PosError('NOT_FOUND', 'Sucursal no existe');
-    const supplierName = input.supplierName?.trim();
-    if (!supplierName) throw new PosError('INVALID_DATA', 'El proveedor es obligatorio');
+    const supplierName = input.supplierName?.trim() || NO_SUPPLIER;
     let supplierRut: string | undefined;
     if (input.supplierRut?.trim()) {
       if (!isValidRut(input.supplierRut)) throw new PosError('INVALID_RUT', 'RUT del proveedor inválido');
@@ -1010,6 +1012,7 @@ export class PosEngine {
   listSuppliers(): { name: string; rut?: string }[] {
     const seen = new Map<string, { name: string; rut?: string }>();
     for (const p of [...(this.state.purchases ?? [])].reverse()) {
+      if (p.supplierName === NO_SUPPLIER && !p.supplierRut) continue; // las compras sin proveedor no se ofrecen como sugerencia
       const key = p.supplierRut ?? norm(p.supplierName);
       if (!seen.has(key)) seen.set(key, { name: p.supplierName, rut: p.supplierRut });
     }
@@ -1248,13 +1251,42 @@ export class PosEngine {
   }
 
   // ---------- tienda web pública ----------
-  /** Catálogo para el público: solo lo publicado y activo, sin costos ni códigos internos. Stock del canal online. */
+  /** Lo que se puede ofrecer en la web de un producto: el stock libre de la caja menos lo que el negocio guarda para el local. */
+  private webAvailable(branchId: string, p: Product): number {
+    return Math.max(0, this.available(branchId, p.id, 'physical') - (p.webReserveQty ?? 0));
+  }
+
+  /** Catálogo para el público: solo lo publicado y activo, sin costos ni códigos internos. Muestra todo el stock real (menos lo reservado para el local). */
   publicCatalog(): PublicProduct[] {
     const branchId = this.state.branches[0]?.id;
     if (!branchId) return [];
     return this.state.products
       .filter((p) => p.active && p.published)
-      .map((p) => ({ id: p.id, name: p.name, category: p.category, priceClp: p.priceClp, available: Math.max(0, this.available(branchId, p.id, 'online')) }));
+      .map((p) => ({ id: p.id, name: p.name, category: p.category, priceClp: p.priceClp, available: this.webAvailable(branchId, p) }));
+  }
+
+  /** Cuántas unidades de un producto guarda el negocio para vender en el local: la web ofrece el resto. 0 = ofrecer todo. */
+  setWebReserve(productId: string, quantity: number): Product {
+    const p = this.state.products.find((x) => x.id === productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 1_000_000) throw new PosError('INVALID_QTY', 'Las unidades para el local deben ser un número entero de 0 o más');
+    if (quantity === 0) delete p.webReserveQty;
+    else p.webReserveQty = quantity;
+    return clone(p);
+  }
+
+  /** Pasa a la caja todo el stock libre que quedó en la web del sistema anterior (donde se repartía por separado). Devuelve cuántas unidades movió. */
+  moveAllWebToShop(branchId: string): number {
+    let moved = 0;
+    for (const p of this.state.products) {
+      const web = this.cell(branchId, p.id, 'online');
+      const free = web.qty - web.reserved;
+      if (free > 0) {
+        this.moveStock(branchId, p.id, 'online', 'physical', free);
+        moved += free;
+      }
+    }
+    return moved;
   }
 
   /** Cancela los pedidos web sin pagar con más de `maxAgeHours` horas, para devolver el stock que reservaron. Devuelve cuántos. */
@@ -1287,15 +1319,25 @@ export class PosEngine {
     const pending = this.state.tickets.filter((t) => t.status === 'open' && !t.paid && t.channel === 'web').length;
     if (pending >= WEB_ORDER_MAX_PENDING) throw new PosError('NOT_ALLOWED', 'La tienda no puede recibir más pedidos por ahora');
 
-    const cart = this.createCart(branchId, 'online', { name, phone, email: email || undefined });
+    // Se valida todo antes de reservar: cada producto debe estar visible en la web y alcanzar con lo que se ofrece.
+    const asked = new Map<string, number>();
+    for (const it of items) {
+      if (typeof it?.productId !== 'string' || !Number.isInteger(it.quantity) || it.quantity < 1 || it.quantity > WEB_ORDER_MAX_QTY) {
+        throw new PosError('INVALID_QTY', 'Cantidad inválida');
+      }
+      const p = this.product(it.productId);
+      if (!p || !p.active || !p.published) throw new PosError('NOT_FOUND', 'Producto no encontrado');
+      asked.set(p.id, (asked.get(p.id) ?? 0) + it.quantity);
+    }
+    for (const [id, qty] of asked) {
+      const p = this.state.products.find((x) => x.id === id)!;
+      if (qty > this.webAvailable(branchId, p)) throw new PosError('OUT_OF_STOCK', `Sin stock suficiente de ${p.name}`);
+    }
+
+    const cart = this.createCart(branchId, 'physical', { name, phone, email: email || undefined });
     this.cartOf(cart.id).pickup = true;
     try {
-      for (const it of items) {
-        if (typeof it?.productId !== 'string' || !Number.isInteger(it.quantity) || it.quantity < 1 || it.quantity > WEB_ORDER_MAX_QTY) {
-          throw new PosError('INVALID_QTY', 'Cantidad inválida');
-        }
-        this.cartAdd(cart.id, it.productId, it.quantity);
-      }
+      for (const [id, qty] of asked) this.cartAdd(cart.id, id, qty);
       return this.holdCart(cart.id, { customerName: name, phone, email, channel: 'web', note });
     } catch (err) {
       this.releaseAll(this.cartOf(cart.id));

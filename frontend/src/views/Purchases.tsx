@@ -108,11 +108,11 @@ export function PurchaseModal({ api, branchId, onClose, onSaved }: { api: PosApi
     <Modal title="🧾 Nueva compra" wide onClose={onClose}>
       <p className="hint">Registra lo que compraste con los datos del documento. Las unidades entran al inventario como <b>compra</b> (no como ajuste) y quedan en la tarjeta de existencia con su fecha.</p>
       <div className="two-col">
-        <label className="field">Proveedor *
-          <input list="suppliers-list" autoFocus placeholder="Razón social o nombre" value={supplierName} onChange={(e) => pickSupplier(e.target.value)} />
+        <label className="field">Proveedor (opcional)
+          <input list="suppliers-list" autoFocus placeholder="Para saber a quién le compras más" value={supplierName} onChange={(e) => pickSupplier(e.target.value)} />
           <datalist id="suppliers-list">{suppliers.map((s) => <option key={s.rut ?? s.name} value={s.name} />)}</datalist>
         </label>
-        <label className="field">RUT del proveedor<input placeholder="76.123.456-7 (opcional)" value={supplierRut} onChange={(e) => setSupplierRut(e.target.value)} /></label>
+        <label className="field">RUT del proveedor (opcional)<input placeholder="76.123.456-7" value={supplierRut} onChange={(e) => setSupplierRut(e.target.value)} /></label>
         <label className="field">Documento
           <select value={docType} onChange={(e) => setDocType(e.target.value as PurchaseDocType)}>
             {PURCHASE_DOC_TYPES.map((t) => <option key={t} value={t}>{PURCHASE_DOC_LABEL[t]}</option>)}
@@ -202,6 +202,13 @@ export function PurchasesSection({ api, branchId }: { api: PosApi; branchId: str
     try { setError(null); await api.rpc.voidPurchase(p.id, reason); setDetail(null); await load(); } catch (e) { setError(msg(e)); setDetail(null); }
   };
   const active = rows.filter((r) => r.status === 'active');
+  // Lo que invertiste por proveedor en el período filtrado (sin contar compras anuladas).
+  const grandTotal = active.reduce((n, r) => n + r.totalClp, 0) || 1;
+  const bySupplier = [...active.reduce((m, r) => {
+    const cur = m.get(r.supplierName) ?? { name: r.supplierName, count: 0, totalClp: 0 };
+    cur.count += 1; cur.totalClp += r.totalClp;
+    return m.set(r.supplierName, cur);
+  }, new Map<string, { name: string; count: number; totalClp: number }>()).values()].sort((a, b) => b.totalClp - a.totalClp);
 
   return (
     <>
@@ -213,6 +220,17 @@ export function PurchasesSection({ api, branchId }: { api: PosApi; branchId: str
         <button className="btn ghost sm" onClick={() => { setFrom(''); setTo(''); }}>Limpiar</button>
       </div>
       <Err text={error} />
+      {bySupplier.length > 0 && (
+        <>
+          <h3 className="section-title">A quién le compras más</h3>
+          <div className="table-wrap"><table>
+            <thead><tr><th>Proveedor</th><th>Compras</th><th>Total con IVA</th><th>% del total</th></tr></thead>
+            <tbody>{bySupplier.map((s) => (
+              <tr key={s.name}><td>{s.name}</td><td>{s.count}</td><td>{formatClp(s.totalClp)}</td><td>{Math.round((s.totalClp / grandTotal) * 100)} %</td></tr>
+            ))}</tbody>
+          </table></div>
+        </>
+      )}
       <div className="table-wrap"><table>
         <thead><tr><th>Fecha</th><th>Proveedor</th><th>Documento</th><th>Unidades</th><th>Neto</th><th>IVA</th><th>Total</th><th>Estado</th><th /></tr></thead>
         <tbody>

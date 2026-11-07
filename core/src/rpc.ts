@@ -9,7 +9,7 @@ export const READ_METHODS = [
 ] as const;
 
 export const WRITE_METHODS = [
-  'upsertProduct', 'adjustStock', 'moveStock', 'setWebStock', 'upsertClient', 'deleteClient', 'upsertCashier', 'upsertPromotion',
+  'upsertProduct', 'adjustStock', 'moveStock', 'setWebStock', 'setWebReserve', 'moveAllWebToShop', 'upsertClient', 'deleteClient', 'upsertCashier', 'upsertPromotion',
   'deletePromotion', 'applyPromo', 'removePromo', 'createCart', 'cartAdd', 'cartSetQuantity', 'cartRemove', 'cartClear',
   'setCustomer', 'openShift', 'closeShift', 'assignCartShift', 'cancelPayment', 'voidSale', 'holdCart', 'createPaidTicket', 'resumeTicket',
   'completeTicket', 'cancelTicket', 'payClientDebt', 'registerConsumption', 'voidConsumption', 'registerPurchase', 'voidPurchase', 'setProductPrice', 'setProductSalePrice', 'updateBusiness', 'receiveStock',
