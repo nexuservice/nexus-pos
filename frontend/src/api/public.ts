@@ -1,7 +1,7 @@
 import { API_URL, ApiError } from './http';
 
 export interface PublicBusiness { name: string; direccion?: string; comuna?: string; phone?: string }
-export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number }
+export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number; description?: string; imageVersion?: number }
 export interface PublicStore { business: PublicBusiness; products: PublicProduct[] }
 export interface PublicOrderInput {
   items: { productId: string; quantity: number }[];

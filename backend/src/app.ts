@@ -186,6 +186,42 @@ export function createApp(opts: AppOptions) {
     req.on('close', () => off());
   });
 
+  // ---------- fotos de productos (el negocio las sube desde la app) ----------
+  const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+  const isJpeg = (b: Buffer) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+
+  app.put('/api/products/:id/image', requireTenant(), express.raw({ type: 'image/jpeg', limit: '400kb' }), (req, res, next) => {
+    try {
+      const productId = String(req.params.id);
+      const tid = res.locals.tid as string;
+      const engine = manager.engine(tid);
+      if (!ID_RE.test(productId) || !engine.listProducts().some((p) => p.id === productId)) return res.status(404).json({ code: 'NOT_FOUND', message: 'Producto no existe' });
+      const data = req.body as unknown;
+      if (!Buffer.isBuffer(data) || !isJpeg(data)) return res.status(415).json({ code: 'INVALID_DATA', message: 'La foto debe ser una imagen JPEG' });
+      manager.saveImage(tid, productId, data);
+      const product = engine.setProductImage(productId, true);
+      manager.save(tid);
+      res.json({ imageVersion: product.imageVersion });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.delete('/api/products/:id/image', requireTenant(), (req, res, next) => {
+    try {
+      const productId = String(req.params.id);
+      const tid = res.locals.tid as string;
+      const engine = manager.engine(tid);
+      if (!ID_RE.test(productId) || !engine.listProducts().some((p) => p.id === productId)) return res.status(404).json({ code: 'NOT_FOUND', message: 'Producto no existe' });
+      manager.deleteImage(tid, productId);
+      engine.setProductImage(productId, false);
+      manager.save(tid);
+      res.json({ ok: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // ---------- tienda web pública (sin sesión; solo negocios con el plan) ----------
   // No pasa por /api/rpc: el público solo puede ver el catálogo y dejar un pedido, nada más del motor.
   const publicHits = new Map<string, number[]>();
@@ -212,6 +248,22 @@ export function createApp(opts: AppOptions) {
       const b = engine.getBusiness();
       res.set('Cache-Control', 'no-store');
       res.json({ business: { name: b.name, direccion: b.direccion ?? null, comuna: b.comuna ?? null, phone: b.phone ?? null }, products: engine.publicCatalog() });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /** Foto de un producto visible en la tienda. La dirección lleva ?v=<versión>, así el navegador la guarda mucho tiempo. */
+  app.get('/api/public/:slug/img/:productId', (req, res, next) => {
+    try {
+      const tenant = publicStore(req, res);
+      if (!tenant) return;
+      const productId = String(req.params.productId);
+      const product = ID_RE.test(productId) ? manager.engine(tenant.id).listProducts().find((p) => p.id === productId) : undefined;
+      const data = product && product.active && product.published && product.imageVersion ? manager.loadImage(tenant.id, productId) : null;
+      if (!data) return res.status(404).json({ code: 'NOT_FOUND', message: 'Sin foto' });
+      res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' });
+      res.send(data);
     } catch (e) {
       next(e);
     }
@@ -331,6 +383,9 @@ export function createApp(opts: AppOptions) {
 
   // ---------- errores ----------
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if ((err as { type?: string } | null)?.type === 'entity.too.large') {
+      return res.status(413).json({ code: 'TOO_LARGE', message: 'La foto es demasiado grande. Prueba con otra o más liviana.' });
+    }
     if (err instanceof PosError) {
       return res.status(err.code === 'NOT_FOUND' ? 404 : 409).json({ code: err.code, message: err.message });
     }

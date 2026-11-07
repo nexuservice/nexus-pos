@@ -20,4 +20,7 @@ export interface PosApi {
   watchPayment(paymentId: string, onEvent: (e: PaymentEvent) => void): () => void;
   /** Respalda toda la base de datos del negocio en un archivo JSON descargable. */
   backup(): Promise<string>;
+  /** Sube la foto (JPEG) de un producto; devuelve su nueva versión. */
+  uploadProductImage(productId: string, jpeg: Blob): Promise<number>;
+  deleteProductImage(productId: string): Promise<void>;
 }

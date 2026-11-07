@@ -1448,3 +1448,35 @@ describe('cantidad exacta en la web y código interno', () => {
     expect(e.nextInternalCode()).toBe('3');
   });
 });
+
+describe('descripción y foto del producto', () => {
+  it('guarda la descripción limpia, la conserva al editar sin enviarla y permite quitarla', () => {
+    const e = make();
+    const p = e.upsertProduct({ name: 'Mermelada', priceClp: 2500, description: '  Frasco   de 250 g,\n sabor frutilla  ' });
+    expect(p.description).toBe('Frasco de 250 g, sabor frutilla');
+    expect(e.upsertProduct({ id: p.id, name: 'Mermelada', priceClp: 2500 }).description).toBe('Frasco de 250 g, sabor frutilla');
+    expect(e.upsertProduct({ id: p.id, name: 'Mermelada', priceClp: 2500, description: '   ' }).description).toBeUndefined();
+    expect(() => e.upsertProduct({ id: p.id, name: 'Mermelada', priceClp: 2500, description: 'x'.repeat(301) })).toThrow(/300 caracteres/);
+  });
+
+  it('la foto sube de versión con cada cambio y se quita; no se puede forzar desde la edición normal', () => {
+    const e = make();
+    expect(e.setProductImage(COLA, true).imageVersion).toBe(1);
+    expect(e.setProductImage(COLA, true).imageVersion).toBe(2);
+    // editar el producto no cambia ni borra la foto
+    expect(e.upsertProduct({ id: COLA, name: 'Cola', priceClp: 1990 }).imageVersion).toBe(2);
+    expect(e.setProductImage(COLA, false).imageVersion).toBeUndefined();
+    expect(() => e.setProductImage('nope', true)).toThrow(PosError);
+  });
+
+  it('el catálogo público incluye descripción y foto solo cuando existen', () => {
+    const e = make();
+    e.upsertProduct({ id: COLA, name: 'Cola', priceClp: 1990, description: 'Botella de 1,5 L' });
+    e.setProductImage(COLA, true);
+    const cola = e.publicCatalog().find((p) => p.id === COLA)!;
+    expect(cola).toMatchObject({ description: 'Botella de 1,5 L', imageVersion: 1 });
+    const agua = e.publicCatalog().find((p) => p.id === AGUA)!;
+    expect('description' in agua).toBe(false);
+    expect('imageVersion' in agua).toBe(false);
+  });
+});

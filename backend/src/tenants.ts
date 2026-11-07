@@ -48,6 +48,10 @@ export interface TenantStorage {
   indexVersion?(): number;
   loadState(id: string): EngineState | null;
   saveState(id: string, state: EngineState): void;
+  /** Fotos de productos (JPEG), una por producto y negocio. */
+  saveImage?(tenantId: string, productId: string, data: Buffer): void;
+  loadImage?(tenantId: string, productId: string): Buffer | null;
+  deleteImage?(tenantId: string, productId: string): void;
 }
 
 function writeAtomic(file: string, data: string): void {
@@ -73,6 +77,21 @@ export class FileTenantStorage implements TenantStorage {
     try { return JSON.parse(fs.readFileSync(this.stateFile(id), 'utf8')) as EngineState; } catch { return null; }
   }
   saveState(id: string, state: EngineState): void { writeAtomic(this.stateFile(id), JSON.stringify(state)); }
+
+  private imageFile(tenantId: string, productId: string) { return path.join(this.dir, 'images', tenantId, `${productId}.jpg`); }
+  saveImage(tenantId: string, productId: string, data: Buffer): void {
+    const file = this.imageFile(tenantId, productId);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, file);
+  }
+  loadImage(tenantId: string, productId: string): Buffer | null {
+    try { return fs.readFileSync(this.imageFile(tenantId, productId)); } catch { return null; }
+  }
+  deleteImage(tenantId: string, productId: string): void {
+    try { fs.unlinkSync(this.imageFile(tenantId, productId)); } catch { /* ya no estaba */ }
+  }
 }
 
 /** Un hash válido de una contraseña que nadie conoce: se verifica igual si el RUT no existe, para no delatar qué RUT están registrados. */
@@ -169,6 +188,13 @@ export class TenantManager {
     this.persist();
     return this.pub(rec);
   }
+
+  saveImage(id: string, productId: string, data: Buffer): void {
+    if (!this.storage.saveImage) throw new TenantError('INVALID_DATA', 'Este almacenamiento no guarda fotos');
+    this.storage.saveImage(id, productId, data);
+  }
+  loadImage(id: string, productId: string): Buffer | null { return this.storage.loadImage?.(id, productId) ?? null; }
+  deleteImage(id: string, productId: string): void { this.storage.deleteImage?.(id, productId); }
 
   /** Deja constancia de que el negocio aceptó la versión indicada de los términos. */
   acceptTerms(id: string, version: string): void {

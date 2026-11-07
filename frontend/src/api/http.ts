@@ -88,6 +88,24 @@ export function createHttpApi(base: string, getToken: () => string, onUnauthoriz
       return finish;
     },
     backup: async () => JSON.stringify(await call.snapshot(), null, 2),
+    uploadProductImage: async (productId, jpeg) => {
+      let res: Response;
+      try {
+        res = await fetch(join(base, `/api/products/${encodeURIComponent(productId)}/image`), { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${getToken()}` }, body: jpeg });
+      } catch { throw new ApiError('NETWORK', 'No se pudo conectar con el servidor. Revisa tu conexión.'); }
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) onUnauthorized();
+      if (!res.ok) throw new ApiError(data.code ?? 'HTTP', data.message ?? `Error ${res.status}`, res.status);
+      return data.imageVersion as number;
+    },
+    deleteProductImage: async (productId) => {
+      let res: Response;
+      try {
+        res = await fetch(join(base, `/api/products/${encodeURIComponent(productId)}/image`), { method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` } });
+      } catch { throw new ApiError('NETWORK', 'No se pudo conectar con el servidor. Revisa tu conexión.'); }
+      if (res.status === 401) onUnauthorized();
+      if (!res.ok) { const data = await res.json().catch(() => ({})); throw new ApiError(data.code ?? 'HTTP', data.message ?? `Error ${res.status}`, res.status); }
+    },
   };
 }
 

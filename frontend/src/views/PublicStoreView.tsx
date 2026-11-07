@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatClp } from '@nexus/core';
 import { Modal } from '../components';
 import { StoreNotice } from '../legal/Legal';
-import { ApiError, publicStore, type PublicOrderResult, type PublicStore } from '../api';
+import { API_URL, ApiError, publicStore, type PublicOrderResult, type PublicStore } from '../api';
 
 const MISSING = 'Esta tienda no existe o no está disponible';
 
@@ -129,9 +129,12 @@ export function PublicStoreView({ slug }: { slug: string }) {
       <div className="products">
         {shown.map((p) => (
           <article key={p.id} className="card">
-            <div className="card-img" aria-hidden>{p.name.charAt(0)}</div>
+            {p.imageVersion
+              ? <img className="card-photo" loading="lazy" alt={p.name} src={`${API_URL.replace(/\/$/, '')}/api/public/${encodeURIComponent(slug)}/img/${p.id}?v=${p.imageVersion}`} />
+              : <div className="card-img" aria-hidden>{p.name.charAt(0)}</div>}
             <span className="cat">{p.category}</span>
             <h3>{p.name}</h3>
+            {p.description && <p className="card-desc">{p.description}</p>}
             <div className="card-row">
               <strong>{formatClp(p.priceClp)}</strong>
               <button className="btn primary sm" disabled={p.available <= 0 || (cart[p.id] ?? 0) >= p.available} onClick={() => setQty(p.id, (cart[p.id] ?? 0) + 1)}>

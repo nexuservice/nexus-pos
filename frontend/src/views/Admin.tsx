@@ -10,6 +10,8 @@ import { ReceiveSection } from './Receive';
 import { PurchasesSection } from './Purchases';
 import { PriceModal, StockCardModal } from './StockCard';
 import { fmtDateTime } from '../format';
+import { API_URL } from '../api';
+import { resizeToJpeg } from '../image';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
 
@@ -34,7 +36,7 @@ export function AdminView({ api, branchId, storeSlug }: { api: PosApi; branchId:
         {section === 'clients' && <Clients api={api} />}
         {section === 'cashiers' && <Cashiers api={api} />}
         {section === 'promos' && <Promos api={api} />}
-        {section === 'inventory' && <Inventory api={api} branchId={branchId} />}
+        {section === 'inventory' && <Inventory api={api} branchId={branchId} storeSlug={storeSlug} />}
         {section === 'shifts' && <Shifts api={api} />}
       </div>
     </div>
@@ -165,10 +167,10 @@ function Promos({ api }: { api: PosApi }) {
   );
 }
 
-const blankProduct = { name: '', sku: '', barcode: '', category: '', price: '', cost: '', published: true, active: true };
+const blankProduct = { name: '', sku: '', barcode: '', category: '', price: '', cost: '', published: true, active: true, description: '' };
 
 /** Inventario: lo que hay en la caja y lo que se ofrece en la web, precios y datos de cada producto. */
-function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) {
+function Inventory({ api, branchId, storeSlug }: { api: PosApi; branchId: string | null; storeSlug?: string | null }) {
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [adj, setAdj] = useState<Record<string, string>>({});
@@ -178,24 +180,30 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
   const [f, setF] = useState<typeof blankProduct & { id?: string }>(blankProduct);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // Foto del producto que se está editando: la que ya tiene, la nueva elegida (aún sin subir) o quitarla.
+  const [photo, setPhoto] = useState<{ current?: number; file?: Blob; preview?: string; remove?: boolean }>({});
   const load = useCallback(async () => { if (branchId) setRows(await api.rpc.inventory(branchId)); }, [api, branchId]);
   useEffect(() => { load().catch(() => undefined); }, [load]);
   const run = async (fn: () => Promise<unknown>) => { try { setError(null); await fn(); await load(); } catch (e) { setError(msg(e)); } };
 
   const edit = (p: Product) => {
     setError(null);
-    setF({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, price: String(p.priceClp), cost: String(addIva(p.costClp)), published: p.published, active: p.active });
+    setF({ id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, category: p.category, price: String(p.priceClp), cost: String(addIva(p.costClp)), published: p.published, active: p.active, description: p.description ?? '' });
+    setPhoto({ current: p.imageVersion });
     setOpen(true);
   };
   const saveProduct = async () => {
     try {
       setError(null);
       const cost = Number(f.cost.replace(/\D/g, '')) || 0;
-      await api.rpc.upsertProduct({
+      const saved = await api.rpc.upsertProduct({
         id: f.id, name: f.name, sku: f.sku, barcode: f.barcode, category: f.category, priceClp: Number(f.price.replace(/\D/g, '')),
-        costClp: splitIva(cost).netClp, published: f.published, active: f.active,
+        costClp: splitIva(cost).netClp, published: f.published, active: f.active, description: f.description,
       });
-      setOpen(false); setF(blankProduct); await load();
+      if (photo.file) await api.uploadProductImage(saved.id, photo.file);
+      else if (photo.remove && photo.current) await api.deleteProductImage(saved.id);
+      if (photo.preview) URL.revokeObjectURL(photo.preview);
+      setOpen(false); setF(blankProduct); setPhoto({}); await load();
     } catch (e) { setError(msg(e)); }
   };
   const setVisible = (p: Product, published: boolean) =>
@@ -207,7 +215,7 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
     <>
       <div className="page-head">
         <h2>Inventario</h2>
-        <div className="head-actions"><button className="btn primary sm" onClick={() => { setError(null); setF(blankProduct); setOpen(true); }}>➕ Nuevo producto</button></div>
+        <div className="head-actions"><button className="btn primary sm" onClick={() => { setError(null); setF(blankProduct); setPhoto({}); setOpen(true); }}>➕ Nuevo producto</button></div>
       </div>
       <p className="hint">
         Tu tienda web muestra <b>todo el stock que tienes en la caja</b>, y lo que se pide por la web se reserva solo. Si quieres guardar unidades para vender en el local,
@@ -234,6 +242,37 @@ function Inventory({ api, branchId }: { api: PosApi; branchId: string | null }) 
               <input inputMode="numeric" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
               <small>Neto {formatClp(splitIva(Number(f.cost.replace(/\D/g, '')) || 0).netClp)}</small>
             </label>
+            <label className="field" style={{ gridColumn: '1 / -1' }}>Descripción para la tienda web (opcional)
+              <textarea rows={2} maxLength={300} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Ej: Botella de 1,5 litros, bien helada" />
+              <small>{f.description.length}/300</small>
+            </label>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <span>Foto del producto (opcional)</span>
+              <div className="photo-row">
+                {(photo.preview || (photo.current && !photo.remove && f.id && storeSlug))
+                  ? <img className="photo-thumb" alt="Foto del producto"
+                      src={photo.preview ?? `${API_URL.replace(/\/$/, '')}/api/public/${storeSlug}/img/${f.id}?v=${photo.current}`} />
+                  : <span className="photo-thumb empty" aria-hidden>{photo.current && !photo.remove ? '✓' : '📷'}</span>}
+                <label className="btn ghost sm">
+                  {photo.preview || (photo.current && !photo.remove) ? 'Cambiar foto' : 'Elegir o sacar foto'}
+                  <input type="file" accept="image/*" hidden onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    try {
+                      setError(null);
+                      const jpeg = await resizeToJpeg(file);
+                      if (photo.preview) URL.revokeObjectURL(photo.preview);
+                      setPhoto({ ...photo, file: jpeg, preview: URL.createObjectURL(jpeg), remove: false });
+                    } catch (err) { setError(msg(err)); }
+                  }} />
+                </label>
+                {(photo.preview || (photo.current && !photo.remove)) && (
+                  <button type="button" className="btn ghost sm" onClick={() => { if (photo.preview) URL.revokeObjectURL(photo.preview); setPhoto({ current: photo.current, remove: true }); }}>Quitar foto</button>
+                )}
+              </div>
+              <small>Se reduce sola para que la tienda cargue rápido. Solo se muestra si el producto está visible en la web.</small>
+            </div>
             <label className="check"><input type="checkbox" checked={f.published} onChange={(e) => setF({ ...f, published: e.target.checked })} /> Visible en la tienda web</label>
             <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Activo (se puede vender)</label>
           </div>

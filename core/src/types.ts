@@ -30,6 +30,10 @@ export interface Product {
   active: boolean;
   /** Unidades que el negocio guarda para vender en el local: la tienda web ofrece el stock de la caja menos esto. Sin valor = 0. */
   webReserveQty?: number;
+  /** Descripción corta que se muestra en la tienda web (hasta 300 caracteres). */
+  description?: string;
+  /** Si el producto tiene foto: número de versión (sube cada vez que se cambia, para que el navegador no use una foto vieja). */
+  imageVersion?: number;
 }
 
 /** Cliente registrado. */

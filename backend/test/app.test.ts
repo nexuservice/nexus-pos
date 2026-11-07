@@ -324,3 +324,56 @@ describe('aceptación de términos', () => {
     expect((await call('GET', '/api/auth/me', { token })).body.terms.accepted).toBe(true);
   });
 });
+
+describe('fotos de productos', () => {
+  const jpeg = (extra = 200) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(extra, 7)]);
+  const put = (token: string | null, id: string, body: Buffer, type = 'image/jpeg') =>
+    fetch(`${base}/api/products/${id}/image`, { method: 'PUT', headers: { 'Content-Type': type, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: new Uint8Array(body) });
+
+  async function conTiendaYProducto() {
+    await createTenant(PEPE);
+    const token = await login(PEPE);
+    const r = await rpc(token, 'receiveStock', 'branch_1', { barcode: '7801', name: 'Leche 1L', category: 'Lácteos', priceClp: 1190, costClp: 700, quantity: 5 });
+    await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: true } });
+    return { token, id: r.body.product.id as string };
+  }
+
+  it('sube una foto, la entrega en la tienda y la quita', async () => {
+    const { token, id } = await conTiendaYProducto();
+    const up = await put(token, id, jpeg());
+    expect(up.status).toBe(200);
+    expect((await up.json() as { imageVersion: number }).imageVersion).toBe(1);
+
+    const pub = await call('GET', '/api/public/almacen-don-pepe');
+    expect(pub.body.products[0]).toMatchObject({ id, imageVersion: 1 });
+    const img = await fetch(`${base}/api/public/almacen-don-pepe/img/${id}?v=1`);
+    expect(img.status).toBe(200);
+    expect(img.headers.get('content-type')).toBe('image/jpeg');
+    expect(img.headers.get('cache-control')).toMatch(/immutable/);
+    expect(Buffer.from(await img.arrayBuffer()).length).toBe(jpeg().length);
+
+    expect((await fetch(`${base}/api/products/${id}/image`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
+    expect((await fetch(`${base}/api/public/almacen-don-pepe/img/${id}`)).status).toBe(404);
+    expect((await call('GET', '/api/public/almacen-don-pepe')).body.products[0].imageVersion).toBeUndefined();
+  });
+
+  it('exige sesión, un JPEG de verdad, un producto que exista y un tamaño razonable', async () => {
+    const { token, id } = await conTiendaYProducto();
+    expect((await put(null, id, jpeg())).status).toBe(401);
+    expect((await put(token, id, Buffer.from('no soy una imagen'))).status).toBe(415);
+    expect((await put(token, id, jpeg(), 'image/png')).status).toBeGreaterThanOrEqual(400);
+    expect((await put(token, 'no_existe', jpeg())).status).toBe(404);
+    expect((await put(token, id, jpeg(500_000))).status).toBe(413);
+  });
+
+  it('no entrega fotos de productos ocultos ni de tiendas cerradas', async () => {
+    const { token, id } = await conTiendaYProducto();
+    await put(token, id, jpeg());
+    await rpc(token, 'upsertProduct', { id, name: 'Leche 1L', priceClp: 1190, published: false });
+    expect((await fetch(`${base}/api/public/almacen-don-pepe/img/${id}`)).status).toBe(404);
+    await rpc(token, 'upsertProduct', { id, name: 'Leche 1L', priceClp: 1190, published: true });
+    expect((await fetch(`${base}/api/public/almacen-don-pepe/img/${id}`)).status).toBe(200);
+    await call('PATCH', '/api/admin/tenants/12345678-5', { admin: ADMIN, body: { webStore: false } });
+    expect((await fetch(`${base}/api/public/almacen-don-pepe/img/${id}`)).status).toBe(404);
+  });
+});

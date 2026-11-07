@@ -34,7 +34,8 @@ const WEB_ORDER_MAX_QTY = 50;
 /** Nombre con que se guarda una compra cuando no se indica proveedor. */
 export const NO_SUPPLIER = 'Sin proveedor';
 
-export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number }
+export interface PublicProduct { id: string; name: string; category: string; priceClp: number; available: number; description?: string; imageVersion?: number }
+export const MAX_DESCRIPTION = 300;
 export interface WebOrderInput {
   items: { productId: string; quantity: number }[];
   customerName: string;
@@ -165,6 +166,12 @@ export class PosEngine {
     const cost = input.costClp ?? 0;
     if (!Number.isInteger(cost) || cost < 0) throw new PosError('INVALID_DATA', 'Costo inválido');
     const existing = input.id ? this.state.products.find((p) => p.id === input.id) : undefined;
+    // La descripción es opcional: sin la clave se conserva la actual; vacía la quita.
+    let description = existing?.description;
+    if ('description' in input) {
+      description = typeof input.description === 'string' ? input.description.replace(/\s+/g, ' ').trim() || undefined : undefined;
+      if (description && description.length > MAX_DESCRIPTION) throw new PosError('INVALID_DATA', `La descripción puede tener hasta ${MAX_DESCRIPTION} caracteres`);
+    }
     const barcode = (input.barcode ?? existing?.barcode ?? '').trim();
     if (barcode && this.state.products.some((p) => p.barcode === barcode && p.id !== existing?.id)) {
       throw new PosError('INVALID_DATA', 'Ya existe un producto con ese código de barras');
@@ -172,6 +179,9 @@ export class PosEngine {
     if (existing) {
       if (input.priceClp !== existing.priceClp) this.recordPriceChange(existing, input.priceClp, 'Edición del producto');
       Object.assign(existing, { ...input, name, barcode, costClp: cost });
+      if (description) existing.description = description; else delete existing.description;
+      // La versión de la foto la maneja solo el servidor al subirla o borrarla.
+      if (input.imageVersion !== undefined) existing.imageVersion = input.imageVersion;
       return clone(existing);
     }
     const n = this.state.products.length + 1;
@@ -182,6 +192,7 @@ export class PosEngine {
       id: newId, sku: input.sku?.trim() || `NX-${String(n).padStart(4, '0')}`,
       barcode: barcode || `78${String(Date.now()).slice(-11)}`, name, category: input.category?.trim() || 'General',
       priceClp: input.priceClp, costClp: cost, published: input.published ?? true, active: input.active ?? true,
+      ...(description ? { description } : {}),
     };
     this.state.products.push(p);
     return clone(p);
@@ -1264,7 +1275,19 @@ export class PosEngine {
     if (!branchId) return [];
     return this.state.products
       .filter((p) => p.active && p.published)
-      .map((p) => ({ id: p.id, name: p.name, category: p.category, priceClp: p.priceClp, available: this.webAvailable(branchId, p) }));
+      .map((p) => ({
+        id: p.id, name: p.name, category: p.category, priceClp: p.priceClp, available: this.webAvailable(branchId, p),
+        ...(p.description ? { description: p.description } : {}), ...(p.imageVersion ? { imageVersion: p.imageVersion } : {}),
+      }));
+  }
+
+  /** Anota que el producto tiene (o ya no tiene) foto. Cada cambio sube la versión. Lo usa el servidor al guardar o borrar el archivo. */
+  setProductImage(productId: string, hasImage: boolean): Product {
+    const p = this.state.products.find((x) => x.id === productId);
+    if (!p) throw new PosError('NOT_FOUND', 'Producto no existe');
+    if (hasImage) p.imageVersion = (p.imageVersion ?? 0) + 1;
+    else delete p.imageVersion;
+    return clone(p);
   }
 
   /** Cuántas unidades de un producto guarda el negocio para vender en el local: la web ofrece el resto. 0 = ofrecer todo. */

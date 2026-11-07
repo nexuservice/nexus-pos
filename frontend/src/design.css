@@ -67,6 +67,13 @@ td, th, .tile-price, .line-total, .total, .sub, .ticket-total, .kpi strong, .car
 .card h3 { line-height: 1.25; }
 .cat { text-transform: none; }
 
+/* fotos y descripciones de productos */
+.card-photo { width: 100%; height: 130px; object-fit: cover; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
+.card-desc { margin: 0; font-size: 13px; line-height: 1.35; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.photo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.photo-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); display: grid; place-items: center; font-size: 26px; }
+textarea { font: inherit; }
+
 /* ---------- formularios y tablas ---------- */
 .gate-card { border-radius: 14px; }
 .field input, .field select, .field textarea, .inline input { border-radius: 8px; }
