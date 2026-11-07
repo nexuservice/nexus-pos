@@ -6,6 +6,8 @@ import { CartPanel, CashModal, CustomerBar, Dropdown, PaymentModal } from '../co
 import { useSettings } from '../settings';
 import { useActiveShift } from '../activeShift';
 import { CameraScanner } from '../CameraScanner';
+import { PhotoCapture } from '../PhotoCapture';
+import { ProductPhoto } from '../ProductPhoto';
 import { comandaHtml, download, fmtTime, printHtml } from '../format';
 import {
   ConsumptionModal, HoldModal, ShiftGate, PromosModal, ShiftCloseModal, ShiftInfoModal, ShiftSummaryModal, TicketsModal, type HoldData,
@@ -24,6 +26,7 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
   const { prefs } = useSettings();
   const { shiftId, setShiftId } = useActiveShift();
   const c = useCart(api, branchId, 'physical', shiftId);
+  const [photoFor, setPhotoFor] = useState<{ id: string; name: string } | null>(null);
   const pay = usePayment(api);
   const shift = useShift(api, shiftId);
   const [modal, setModal] = useState<ModalKind>(null);
@@ -163,11 +166,16 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
         )}
         <div className="grid">
           {shown.map((p) => (
-            <button key={p.id} className="tile" disabled={p.available <= 0} onClick={() => c.add(p.barcode)}>
-              <span className="tile-name">{p.name}</span>
-              <span className="tile-price">{formatClp(p.priceClp)}</span>
-              <span className={'tile-stock' + (p.available <= 5 ? ' low' : '')}>{p.available > 0 ? `${p.available} en caja` : 'Sin stock'}</span>
-            </button>
+            <div key={p.id} className="tile-wrap">
+              <button className="tile" disabled={p.available <= 0} onClick={() => c.add(p.barcode)}>
+                <ProductPhoto api={api} productId={p.id} version={p.imageVersion} className="tile-photo" alt="" />
+                <span className="tile-name">{p.name}</span>
+                <span className="tile-price">{formatClp(p.priceClp)}</span>
+                <span className={'tile-stock' + (p.available <= 5 ? ' low' : '')}>{p.available > 0 ? `${p.available} en caja` : 'Sin stock'}</span>
+              </button>
+              <button type="button" className="tile-cam" title={p.imageVersion ? 'Cambiar la foto' : 'Agregar una foto'} aria-label={`${p.imageVersion ? 'Cambiar' : 'Agregar'} la foto de ${p.name}`}
+                onClick={() => setPhotoFor({ id: p.id, name: p.name })}>📷</button>
+            </div>
           ))}
         </div>
 
@@ -237,6 +245,10 @@ export function PosView({ api, branchId, go, refreshKey = 0 }: { api: PosApi; br
           summary={`${c.cart.lines.length} producto(s) · ${c.cart.lines.reduce((s, l) => s + l.quantity, 0)} artículo(s) · Total ${formatClp(c.cart.totalClp)}`}
           defaultName={c.cart.customer.name ?? ''} onSave={saveHold} onClose={() => setModal(null)}
         />
+      )}
+      {photoFor && (
+        <PhotoCapture title={`Foto de ${photoFor.name}`} onClose={() => setPhotoFor(null)}
+          onPhoto={async (jpeg) => { await api.uploadProductImage(photoFor.id, jpeg); setPhotoFor(null); await c.refreshCatalog(); }} />
       )}
       {modal === 'tickets' && <TicketsModal api={api} onResume={resume} onChanged={() => { refreshMeta(); c.refreshCatalog(); }} onClose={() => setModal(null)} />}
       {modal === 'promos' && <PromosModal api={api} canApply={hasLines} onApply={(code) => c.applyPromo(code)} onClose={() => setModal(null)} />}

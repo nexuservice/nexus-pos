@@ -68,6 +68,11 @@ td, th, .tile-price, .line-total, .total, .sub, .ticket-total, .kpi strong, .car
 .cat { text-transform: none; }
 
 /* fotos y descripciones de productos */
+.tile-wrap { position: relative; display: flex; }
+.tile-wrap > .tile { flex: 1; min-width: 0; }
+.tile-photo { width: 100%; height: calc(64px * var(--btn-scale)); object-fit: cover; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
+.tile-cam { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, transparent); font-size: 14px; line-height: 1; opacity: .8; }
+.tile-cam:hover, .tile-cam:focus-visible { opacity: 1; border-color: var(--ink); }
 .card-photo { width: 100%; height: 130px; object-fit: cover; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
 .card-desc { margin: 0; font-size: 13px; line-height: 1.35; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .photo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

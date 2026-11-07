@@ -103,6 +103,14 @@ export function createHttpApi(base: string, getToken: () => string, onUnauthoriz
       if (!res.ok) throw new ApiError(data.code ?? 'HTTP', data.message ?? `Error ${res.status}`, res.status);
       return data.imageVersion as number;
     },
+    getProductImage: async (productId) => {
+      let res: Response;
+      try {
+        res = await fetch(join(base, `/api/products/${encodeURIComponent(productId)}/image`), { headers: { Authorization: `Bearer ${getToken()}` } });
+      } catch { return null; }
+      if (res.status === 401) onUnauthorized();
+      return res.ok ? res.blob() : null;
+    },
     deleteProductImage: async (productId) => {
       let res: Response;
       try {

@@ -244,7 +244,23 @@ export function createApp(opts: AppOptions) {
   const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
   const isJpeg = (b: Buffer) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
 
-  app.put('/api/products/:id/image', requireTenant(), ownerOnly, express.raw({ type: 'image/jpeg', limit: '400kb' }), (req, res, next) => {
+  /** Foto de un producto para la caja y el inventario (con sesión; no depende de la tienda web). */
+  app.get('/api/products/:id/image', requireTenant(), (req, res, next) => {
+    try {
+      const productId = String(req.params.id);
+      const tid = res.locals.tid as string;
+      const product = ID_RE.test(productId) ? manager.engine(tid).listProducts().find((p) => p.id === productId) : undefined;
+      const data = product?.imageVersion ? manager.loadImage(tid, productId) : null;
+      if (!data) return res.status(404).json({ code: 'NOT_FOUND', message: 'Sin foto' });
+      res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=31536000' });
+      res.send(data);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // El cajero también puede poner la foto de un producto (es lo más fácil desde la caja); quitarla es solo del administrador.
+  app.put('/api/products/:id/image', requireTenant(), express.raw({ type: 'image/jpeg', limit: '400kb' }), (req, res, next) => {
     try {
       const productId = String(req.params.id);
       const tid = res.locals.tid as string;

@@ -23,4 +23,6 @@ export interface PosApi {
   /** Sube la foto (JPEG) de un producto; devuelve su nueva versión. */
   uploadProductImage(productId: string, jpeg: Blob): Promise<number>;
   deleteProductImage(productId: string): Promise<void>;
+  /** Foto (JPEG) de un producto con la sesión del negocio, o null si no tiene. */
+  getProductImage(productId: string): Promise<Blob | null>;
 }

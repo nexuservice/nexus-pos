@@ -425,12 +425,18 @@ describe('perfil de cajero', () => {
     expect((await rpc(owner, 'inventory', 'branch_1')).status).toBe(200);
   });
 
-  it('no sube fotos ni acepta términos, y deja de valer si el dueño desactiva al cajero', async () => {
+  it('sube y ve fotos, pero no las borra ni acepta términos, y deja de valer si el dueño desactiva al cajero', async () => {
     const owner = await conCajero();
     const { body } = await cajeroLogin({ rut: PEPE.rut, name: 'Ana Rojas', pin: '4321' });
     const token = body.token as string;
-    const foto = await fetch(`${base}/api/products/x/image`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` }, body: new Uint8Array([0xff, 0xd8, 0xff, 1]) });
-    expect(foto.status).toBe(403);
+    const id = (await rpc(owner, 'receiveStock', 'branch_1', { barcode: '7801', name: 'Leche', priceClp: 1190, costClp: 700, quantity: 3 })).body.product.id as string;
+    const foto = await fetch(`${base}/api/products/${id}/image`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` }, body: new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]) });
+    expect(foto.status).toBe(200);
+    const ver = await fetch(`${base}/api/products/${id}/image`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(ver.status).toBe(200);
+    expect(ver.headers.get('content-type')).toBe('image/jpeg');
+    expect((await fetch(`${base}/api/products/${id}/image`)).status).toBe(401);
+    expect((await fetch(`${base}/api/products/${id}/image`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })).status).toBe(403);
     expect((await call('POST', '/api/auth/accept-terms', { token, body: { version: 'x' } })).status).toBe(403);
 
     const cajeros = (await rpc(owner, 'listCashiers')).body as { id: string; name: string }[];

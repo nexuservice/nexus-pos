@@ -10,8 +10,9 @@ import { ReceiveSection } from './Receive';
 import { PurchasesSection } from './Purchases';
 import { PriceModal, StockCardModal } from './StockCard';
 import { fmtDateTime } from '../format';
-import { API_URL } from '../api';
 import { resizeToJpeg } from '../image';
+import { PhotoCapture } from '../PhotoCapture';
+import { ProductPhoto } from '../ProductPhoto';
 import { msg } from '../hooks';
 import { PromoForm } from './PosModals';
 
@@ -209,6 +210,12 @@ function Inventory({ api, branchId, storeSlug }: { api: PosApi; branchId: string
   const [query, setQuery] = useState('');
   // Foto del producto que se está editando: la que ya tiene, la nueva elegida (aún sin subir) o quitarla.
   const [photo, setPhoto] = useState<{ current?: number; file?: Blob; preview?: string; remove?: boolean }>({});
+  const [capturing, setCapturing] = useState(false);
+  /** Deja la foto elegida (o recién sacada) lista para guardarse con el producto. */
+  const useJpeg = (jpeg: Blob) => {
+    if (photo.preview) URL.revokeObjectURL(photo.preview);
+    setPhoto({ ...photo, file: jpeg, preview: URL.createObjectURL(jpeg), remove: false });
+  };
   const load = useCallback(async () => { if (branchId) setRows(await api.rpc.inventory(branchId)); }, [api, branchId]);
   useEffect(() => { load().catch(() => undefined); }, [load]);
   const run = async (fn: () => Promise<unknown>) => { try { setError(null); await fn(); await load(); } catch (e) { setError(msg(e)); } };
@@ -276,21 +283,21 @@ function Inventory({ api, branchId, storeSlug }: { api: PosApi; branchId: string
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <span>Foto del producto (opcional)</span>
               <div className="photo-row">
-                {(photo.preview || (photo.current && !photo.remove && f.id && storeSlug))
-                  ? <img className="photo-thumb" alt="Foto del producto"
-                      src={photo.preview ?? `${API_URL.replace(/\/$/, '')}/api/public/${storeSlug}/img/${f.id}?v=${photo.current}`} />
-                  : <span className="photo-thumb empty" aria-hidden>{photo.current && !photo.remove ? '✓' : '📷'}</span>}
+                {photo.preview
+                  ? <img className="photo-thumb" alt="Foto del producto" src={photo.preview} />
+                  : photo.current && !photo.remove
+                    ? <ProductPhoto api={api} productId={f.id} version={photo.current} className="photo-thumb" alt="Foto del producto" />
+                    : <span className="photo-thumb empty" aria-hidden>📷</span>}
+                <button type="button" className="btn ghost sm" onClick={() => setCapturing(true)}>📷 Sacar foto</button>
                 <label className="btn ghost sm">
-                  {photo.preview || (photo.current && !photo.remove) ? 'Cambiar foto' : 'Elegir o sacar foto'}
+                  🖼️ Elegir de la galería
                   <input type="file" accept="image/*" hidden onChange={async (e) => {
                     const file = e.target.files?.[0];
                     e.target.value = '';
                     if (!file) return;
                     try {
                       setError(null);
-                      const jpeg = await resizeToJpeg(file);
-                      if (photo.preview) URL.revokeObjectURL(photo.preview);
-                      setPhoto({ ...photo, file: jpeg, preview: URL.createObjectURL(jpeg), remove: false });
+                      useJpeg(await resizeToJpeg(file));
                     } catch (err) { setError(msg(err)); }
                   }} />
                 </label>
@@ -298,7 +305,7 @@ function Inventory({ api, branchId, storeSlug }: { api: PosApi; branchId: string
                   <button type="button" className="btn ghost sm" onClick={() => { if (photo.preview) URL.revokeObjectURL(photo.preview); setPhoto({ current: photo.current, remove: true }); }}>Quitar foto</button>
                 )}
               </div>
-              <small>Se reduce sola para que la tienda cargue rápido. Solo se muestra si el producto está visible en la web.</small>
+              <small>Se reduce sola para que la tienda cargue rápido. En la tienda web solo se muestra si el producto está visible.</small>
             </div>
             <label className="check"><input type="checkbox" checked={f.published} onChange={(e) => setF({ ...f, published: e.target.checked })} /> Visible en la tienda web</label>
             <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Activo (se puede vender)</label>
@@ -308,6 +315,7 @@ function Inventory({ api, branchId, storeSlug }: { api: PosApi; branchId: string
         </div>
       )}
       {!open && <Err text={error} />}
+      {capturing && <PhotoCapture onClose={() => setCapturing(false)} onPhoto={(jpeg) => { useJpeg(jpeg); setCapturing(false); }} />}
       {legacyWeb > 0 && (
         <div className="alert" role="status">
           Hay {legacyWeb} unidad(es) separadas para la web desde el sistema anterior, que ya no se ofrecen. Pásalas a la caja para que se vendan.{' '}
